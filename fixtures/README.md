@@ -1,6 +1,5 @@
-# 测试样本
+# Test fixtures
 
-此目录只保存可公开、已脱敏且允许提交到版本库的数据样本。
+Only public, sanitized, redistributable camera samples may be committed here.
 
-真实相机数据请放入 `fixtures/private/` 或项目根目录的 `data/`；这些目录已被 Git 忽略。
-
+Place private camera captures under `fixtures/private/` or `data/`. Both locations are ignored by Git.

@@ -1,57 +1,54 @@
-# 数据模型草案
+# SQLite data model
 
-模型会随着真实样本调整。任何解析结果都应能追溯到原始导入数据。
+Every decoded value remains traceable to the complete raw camera packet from which it was derived.
 
-## Import（导入批次）
+## `imports`
 
-- `id`
-- `source_type`：相机、连接器、文件或手工录入
-- `source_name`
-- `imported_at`
-- `content_hash`
-- `parser_version`
-- `raw_data_path`
-- `warnings`
+One row represents one completed camera download.
 
-## Camera（机身）
+- `id` — primary key
+- `imported_at` — SQLite UTC timestamp
+- `source_type` — automatic serial detection, an explicit COM port, or WinUSB
+- `parser_version` — schema/parser version used for the import
+- `reported_rolls` — roll-segment count returned by E1
 
-- `id`
-- `model`
-- `serial_number`
-- `custom_functions`
+## `rolls`
 
-## Roll（胶卷）
+One row represents one E3 roll segment.
 
-- `id`
-- `camera_id`
-- `import_id`
-- `roll_number`
-- `loaded_at`
-- `unloaded_at`
-- `film_name`
-- `film_speed_iso`
-- `frame_count`
-- `notes`
+- `id` — primary key
+- `import_id` — owning import batch
+- `roll_index` — order returned by the camera
+- `film_id` — decoded BCD Film ID
+- `record_width` — E4 internal record-width class
+- `dx_iso` — decoded DX ISO, or `NULL` when unavailable
+- `loaded_at` — decoded BCD film-load time
+- `raw_e3` — complete E3 packet in hexadecimal form
 
-## Frame（单帧）
+## `frames`
 
-- `id`
-- `roll_id`
-- `frame_number`
-- `captured_at`
-- `lens`
+One row represents one E4 shooting record.
+
+- `id`, `roll_id`, `frame_index`, `frame_number`
 - `focal_length_mm`
-- `aperture`
-- `shutter_speed`
-- `exposure_mode`
-- `metering_mode`
-- `exposure_compensation_ev`
-- `flash_fired`
-- `multiple_exposure`
-- `raw_fields`：暂未识别或需原样保留的字段
-- `notes`
+- `max_aperture_f`, `aperture_f`
+- `shutter_seconds`, `shutter_display`
+- `manual_iso`
+- `exposure_compensation_ev`, `flash_compensation_ev`
+- `flash_mode`, `metering_mode`, `shooting_mode`
+- `film_advance`, `af_mode`, `multiple_exposure`
+- `bulb_time_units`
+- `captured_at`
+- `cfn_values` — exactly 19 comma-separated option numbers when recorded
+- `battery_loaded_at`
+- `raw_e4` — complete E4 packet in hexadecimal form
 
-## 去重建议
+Fields not selected by the roll's mask are stored as `NULL`. Unsupported enum values remain visible as `Unknown(0xNN)`.
 
-优先使用原始数据内容摘要识别重复导入；记录级去重可组合机身序列号、胶卷编号、帧号与拍摄时间，但不能假设所有字段始终存在。
+## Raw-data policy
 
+Raw transport values are stored only as `raw_e3` and `raw_e4`. The schema deliberately avoids separate per-field wire columns because every original byte can be recovered from these complete packets.
+
+## Import behavior
+
+Each successful download is inserted in one transaction. A failure rolls back the entire new import. Existing imports are never overwritten.
