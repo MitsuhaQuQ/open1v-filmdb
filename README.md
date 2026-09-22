@@ -72,7 +72,7 @@ Interactive mode accepts these commands:
 - `help` shows the command list.
 - `exit` closes the program.
 
-The clear operation sends the verified, parameterless E2 command exactly once and then opens a fresh camera session to confirm that E1 reports zero rolls. If the acknowledgement or verification is uncertain, the application reports an error and does not automatically retry the destructive command.
+The clear operation sends the verified, parameterless E2 command exactly once, keeps the same PC session open, and polls E1 until it reports zero rolls before refreshing FC. If the acknowledgement or verification is uncertain, the application reports an error and does not automatically retry the destructive command.
 
 The camera must be in PC mode before each new connection. A completed download exits PC mode normally.
 
