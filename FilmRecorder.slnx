@@ -1,0 +1,5 @@
+<Solution>
+  <Configurations><Platform Name="x64" /></Configurations>
+  <Project Path="FilmRecorder.vcxproj" />
+  <Project Path="external\open1V-cli\open1v-core.vcxproj" />
+</Solution>

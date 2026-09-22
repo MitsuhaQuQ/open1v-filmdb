@@ -1,0 +1,3 @@
+[submodule "external/open1V-cli"]
+	path = external/open1V-cli
+	url = https://github.com/MitsuhaQuQ/open1V-cli.git
