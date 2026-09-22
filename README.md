@@ -40,24 +40,39 @@ The Release executable is written to `x64\Release\film-record.exe`.
 ## Usage
 
 ```powershell
+# Start interactive mode with automatic bridge detection
+.\x64\Release\film-record.exe
+
+# Start interactive mode on an explicit serial port
+.\x64\Release\film-record.exe --port COM3
+
 # Offline parser and database tests
 .\x64\Release\film-record.exe self-test
 
-# Automatically detected compatible bridge
-.\x64\Release\film-record.exe download
+# Non-interactive sync with automatic bridge detection
+.\x64\Release\film-record.exe sync
 
-# Explicit serial port
-.\x64\Release\film-record.exe download --port COM3
+# Non-interactive sync on an explicit serial port
+.\x64\Release\film-record.exe sync --port COM3
 
 # WinUSB
-.\x64\Release\film-record.exe download --winusb
+.\x64\Release\film-record.exe sync --winusb
 
 # CSV export
-.\x64\Release\film-record.exe download --port COM3 --format csv --output .\exports\film-records.csv
+.\x64\Release\film-record.exe sync --port COM3 --format csv --output .\exports\film-records.csv
 
 # Inspect the default database
 .\x64\Release\film-record.exe inspect
 ```
+
+Interactive mode accepts these commands:
+
+- `sync` downloads and decodes all camera film records into the local SQLite database.
+- `clear` permanently deletes all film records stored by the camera. It requires an explicit `y`; entering `n` returns to the prompt without changing the camera.
+- `help` shows the command list.
+- `exit` closes the program.
+
+The clear operation sends the verified, parameterless E2 command exactly once and then opens a fresh camera session to confirm that E1 reports zero rolls. If the acknowledgement or verification is uncertain, the application reports an error and does not automatically retry the destructive command.
 
 The camera must be in PC mode before each new connection. A completed download exits PC mode normally.
 
