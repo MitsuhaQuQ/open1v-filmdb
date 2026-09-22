@@ -89,8 +89,33 @@ void syncRecords(Options options) {
     auto transport = makeTransport(options);
     open1v::BridgeClient bridge(*transport);
     open1v::CameraProtocolSession camera(bridge);
-    std::cout << "Downloading film records from EOS-1V...\n";
-    const auto download = filmrecorder::parsePackets(camera.readOnce(open1v::CameraRead::filmRecords));
+    std::vector<open1v::CameraPacket> packets;
+    try {
+        camera.beginSession();
+        const auto status = camera.perform(open1v::CameraRead::filmStatus);
+        const auto e1 = std::find_if(status.begin(), status.end(),
+            [](const open1v::CameraPacket& packet) {
+                return packet.label == "FILM STATUS E1";
+            });
+        if (e1 == status.end() || e1->bytes.size() != 5)
+            throw std::runtime_error("camera did not return a valid film-record status");
+        const auto rollCount = static_cast<unsigned>(e1->bytes[2]) << 8 |
+                               static_cast<unsigned>(e1->bytes[3]);
+        if (rollCount == 0) {
+            camera.endSession();
+            std::cout << "Camera film-record storage is empty; nothing to sync.\n";
+            return;
+        }
+
+        std::cout << "Camera reports " << rollCount
+                  << " roll(s). Downloading film records...\n";
+        packets = camera.perform(open1v::CameraRead::filmRecords);
+        camera.endSession();
+    } catch (...) {
+        try { if (camera.sessionActive()) camera.endSession(); } catch (...) {}
+        throw;
+    }
+    const auto download = filmrecorder::parsePackets(packets);
     const std::filesystem::path path(options.output);
     std::size_t frames = 0;
     for (const auto& roll : download.rolls) frames += roll.frames.size();

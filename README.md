@@ -67,7 +67,7 @@ The Release executable is written to `x64\Release\film-record.exe`.
 
 Interactive mode accepts these commands:
 
-- `sync` downloads and decodes all camera film records into the local SQLite database.
+- `sync` first checks the camera's E1 roll count. If it is zero, the command returns without creating an empty import; otherwise it downloads and decodes all film records into the local SQLite database.
 - `clear` permanently deletes all film records stored by the camera. It requires an explicit `y`; entering `n` returns to the prompt without changing the camera.
 - `help` shows the command list.
 - `exit` closes the program.
