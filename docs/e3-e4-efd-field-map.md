@@ -74,6 +74,11 @@ E4 fields do not have universal absolute offsets. The parser must consume select
 
 Four internal bytes are reserved for fields recorded independently of the selectable-field total. The parser also preserves the complete E4 packet.
 
+Interactive `set` reads this mask with E8 and changes one numbered field at a
+time. Writes use E7 for the calculated 8/16/32-byte record-width class followed
+by E9 for the complete mask, then require an exact E8 read-back match. Changing
+the mask can start a new logical roll segment when a film is partly exposed.
+
 ## Confirmed default-layout fields
 
 These offsets apply only to mask `FF FF 0C 3F 00 08 7F 00`.

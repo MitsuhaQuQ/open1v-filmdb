@@ -5,6 +5,7 @@
 #include "open1v/winusb_transport.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <chrono>
@@ -208,6 +209,101 @@ std::optional<std::size_t> menuIndex(const std::string& input,
     return value - 1;
 }
 
+struct ShootingDataField {
+    const char* name;
+    std::array<std::uint8_t,8> bits;
+};
+
+const std::array<ShootingDataField,18>& shootingDataFields() {
+    static const std::array<ShootingDataField,18> fields{{
+        {"Focal length",                 {0x30,0,0,0,0,0,0,0}},
+        {"Maximum aperture",             {0x08,0,0,0,0,0,0,0}},
+        {"Shutter speed",                {0x04,0,0,0,0,0,0,0}},
+        {"Selected aperture",             {0x02,0,0,0,0,0,0,0}},
+        {"Manual ISO",                    {0x01,0,0,0,0,0,0,0}},
+        {"Exposure compensation",         {0,0x80,0,0,0,0,0,0}},
+        {"Flash exposure compensation",   {0,0x40,0,0,0,0,0,0}},
+        {"Flash mode",                    {0,0x20,0,0,0,0,0,0}},
+        {"Metering mode",                 {0,0x10,0,0,0,0,0,0}},
+        {"Film advance",                  {0,0x04,0,0,0,0,0,0}},
+        {"AF mode",                       {0,0x02,0,0,0,0,0,0}},
+        {"Bulb exposure time",            {0,0,0x0c,0,0,0,0,0}},
+        {"Shooting date",                 {0,0,0,0x38,0,0,0,0}},
+        {"Shooting time",                 {0,0,0,0x07,0,0,0,0}},
+        {"C.Fn settings",                 {0,0,0,0,0x7f,0xf0,0,0}},
+        {"Focus-point selection",         {0,0,0,0,0,0x08,0,0}},
+        {"In-focus point data",           {0,0,0,0,0,0,0x7f,0}},
+        {"Battery-load date/time",        {0,0,0,0,0,0,0,0x3f}}
+    }};
+    return fields;
+}
+
+std::array<std::uint8_t,8> shootingMask(
+    const std::vector<open1v::CameraPacket>& packets) {
+    for (const auto& packet : packets) {
+        if (packet.bytes.size() == 11 && packet.bytes[0] == 0xe8) {
+            std::array<std::uint8_t,8> mask{};
+            std::copy_n(packet.bytes.begin()+2,mask.size(),mask.begin());
+            return mask;
+        }
+    }
+    throw std::runtime_error("camera did not return the shooting-data field mask");
+}
+
+bool fieldEnabled(const std::array<std::uint8_t,8>& mask,
+                  const ShootingDataField& field) {
+    for (std::size_t i=0;i<mask.size();++i)
+        if ((mask[i]&field.bits[i])!=field.bits[i]) return false;
+    return true;
+}
+
+void setShootingData(const Options& options) {
+    for (;;) {
+        auto transport=makeTransport(options);
+        open1v::BridgeClient bridge(*transport);
+        open1v::CameraProtocolSession camera(bridge);
+        auto mask=shootingMask(camera.readOnce(open1v::CameraRead::settings));
+        const auto& fields=shootingDataFields();
+        std::cout << "\nFilm shooting-data fields\n";
+        for (std::size_t i=0;i<fields.size();++i)
+            std::cout << i+1 << ") [" << (fieldEnabled(mask,fields[i])?"ON ":"OFF")
+                      << "] " << fields[i].name << '\n';
+        std::cout << "q) Back\nset/field> " << std::flush;
+        std::string input;
+        if (!std::getline(std::cin,input)) return;
+        input=normalized(input);
+        if (input=="q") return;
+        const auto selected=menuIndex(input,fields.size());
+        if (!selected) { std::cout << "Invalid selection.\n"; continue; }
+
+        const auto& field=fields[*selected];
+        const bool current=fieldEnabled(mask,field);
+        std::cout << "\n" << field.name << " is currently "
+                  << (current?"ON":"OFF") << ".\n"
+                  << "1) ON\n2) OFF\nq) Cancel\nset/value> " << std::flush;
+        if (!std::getline(std::cin,input)) return;
+        input=normalized(input);
+        if (input=="q") continue;
+        const auto state=menuIndex(input,2);
+        if (!state) { std::cout << "Invalid selection.\n"; continue; }
+        const bool enabled=*state==0;
+        if (enabled==current) { std::cout << "Setting is already unchanged.\n"; continue; }
+        for (std::size_t i=0;i<mask.size();++i) {
+            if(enabled)mask[i]|=field.bits[i];
+            else mask[i]&=static_cast<std::uint8_t>(~field.bits[i]);
+        }
+        std::cout << "Warning: changing recorded fields can split a partially shot film "
+                     "into a new logical roll segment.\nApply and verify this change? [y/n]: "
+                  << std::flush;
+        if (!std::getline(std::cin,input)) return;
+        input=normalized(input);
+        if (input!="y") { std::cout << "Setting change cancelled.\n"; continue; }
+        camera.setShootingDataMask(mask);
+        std::cout << "Verified: " << field.name << " is now "
+                  << (enabled?"ON":"OFF") << ".\n";
+    }
+}
+
 std::string readMenuInput(bool immediateMonthKeys = false) {
 #if defined(_WIN32)
     if (immediateMonthKeys && _isatty(_fileno(stdin))) {
@@ -361,6 +457,7 @@ void interactive(const Options& options) {
         std::cout << "\n"
                      "sync - Download camera film records to the local SQLite database\n"
                      "clear - Permanently delete all film records from the camera\n"
+                     "set - Select which shooting-data fields the camera records\n"
                      "view - Browse imported rolls by month and date\n"
                      "help - Show this command table again\n"
                      "exit - Close the program\n\n";
@@ -373,6 +470,7 @@ void interactive(const Options& options) {
         if (command == "help") continue;
         try {
             if (command == "sync") syncRecords(options);
+            else if (command == "set") setShootingData(options);
             else if (command == "view")
                 viewDatabase(executableDirectory() / "film-records.sqlite3");
             else if (command == "clear") {
