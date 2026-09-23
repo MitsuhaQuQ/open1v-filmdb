@@ -3,10 +3,14 @@
 #include <winsqlite/winsqlite3.h>
 
 #include <array>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <stdexcept>
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <utility>
 
 namespace filmrecorder {
 namespace {
@@ -73,6 +77,7 @@ private:
 constexpr const char* schema = R"SQL(
 CREATE TABLE IF NOT EXISTS imports (
  id INTEGER PRIMARY KEY, imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ import_date TEXT NOT NULL, import_time TEXT NOT NULL,
  source_type TEXT NOT NULL, parser_version INTEGER NOT NULL, reported_rolls INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS rolls (
@@ -109,6 +114,15 @@ bool columnExists(sqlite3* db, const char* table, const char* column) {
 }
 
 void migrate(Database& db) {
+    if (!columnExists(db.get(), "imports", "import_date"))
+        db.exec("ALTER TABLE imports ADD COLUMN import_date TEXT");
+    if (!columnExists(db.get(), "imports", "import_time"))
+        db.exec("ALTER TABLE imports ADD COLUMN import_time TEXT");
+    // Preserve older imports by deriving their split fields from imported_at.
+    // New imports always receive local system date/time from the application.
+    db.exec("UPDATE imports SET import_date=substr(imported_at,1,10) WHERE import_date IS NULL");
+    db.exec("UPDATE imports SET import_time=substr(imported_at,12,8) WHERE import_time IS NULL");
+
     const bool legacy = columnExists(db.get(), "frames", "max_aperture_wire");
     if (!legacy) return;
     const std::array<std::tuple<const char*,const char*,const char*>,18> columns{{
@@ -164,6 +178,19 @@ COMMIT;
     }
 }
 
+std::pair<std::string, std::string> localImportDateTime() {
+    const auto now = std::chrono::system_clock::now();
+    const auto value = std::chrono::system_clock::to_time_t(now);
+    std::tm local{};
+    if (localtime_s(&local, &value) != 0)
+        throw std::runtime_error("cannot read local system time");
+    std::ostringstream date;
+    std::ostringstream time;
+    date << std::put_time(&local, "%Y-%m-%d");
+    time << std::put_time(&local, "%H:%M:%S");
+    return {date.str(), time.str()};
+}
+
 } // namespace
 
 SaveResult saveToDatabase(const std::filesystem::path& path,
@@ -171,8 +198,10 @@ SaveResult saveToDatabase(const std::filesystem::path& path,
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
     Database db(path); db.exec(schema); migrate(db); db.exec("BEGIN IMMEDIATE");
     try {
-        Statement addImport(db.get(), "INSERT INTO imports(source_type,parser_version,reported_rolls) VALUES(?,1,?)");
-        addImport.text(1, sourceType); addImport.integer(2, download.reportedRolls); addImport.done();
+        const auto [importDate, importTime] = localImportDateTime();
+        Statement addImport(db.get(), "INSERT INTO imports(import_date,import_time,source_type,parser_version,reported_rolls) VALUES(?,?,?,1,?)");
+        addImport.text(1, importDate); addImport.text(2, importTime);
+        addImport.text(3, sourceType); addImport.integer(4, download.reportedRolls); addImport.done();
         const auto importId = sqlite3_last_insert_rowid(db.get());
         Statement addRoll(db.get(), "INSERT INTO rolls(import_id,roll_index,film_id,record_width,dx_iso,loaded_at,raw_e3) VALUES(?,?,?,?,?,?,?)");
         Statement addFrame(db.get(), "INSERT INTO frames(roll_id,frame_index,frame_number,focal_length_mm,max_aperture_f,shutter_seconds,shutter_display,aperture_f,manual_iso,exposure_compensation_ev,flash_compensation_ev,flash_mode,metering_mode,shooting_mode,film_advance,af_mode,multiple_exposure,bulb_time_units,captured_at,cfn_values,battery_loaded_at,raw_e4) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
@@ -229,6 +258,13 @@ std::string inspectDatabase(const std::filesystem::path& path) {
     const auto imports = scalar("SELECT count(*) FROM imports");
     const auto rolls = scalar("SELECT count(*) FROM rolls");
     const auto frames = scalar("SELECT count(*) FROM frames");
+    const auto invalidImportDateTime = scalar(R"SQL(
+        SELECT count(*) FROM imports
+        WHERE import_date IS NULL OR length(import_date) <> 10
+           OR import_date NOT GLOB '????-??-??'
+           OR import_time IS NULL OR length(import_time) <> 8
+           OR import_time NOT GLOB '??:??:??'
+    )SQL");
     const auto cfnRows = scalar("SELECT count(*) FROM frames WHERE cfn_values IS NOT NULL");
     const auto invalidCfn = scalar(R"SQL(
         SELECT count(*) FROM frames
@@ -250,6 +286,7 @@ std::string inspectDatabase(const std::filesystem::path& path) {
         << "Imports: " << imports << '\n'
         << "Rolls: " << rolls << '\n'
         << "Frames: " << frames << '\n'
+        << "Invalid import date/time rows: " << invalidImportDateTime << '\n'
         << "Frames with C.Fn: " << cfnRows << '\n'
         << "Invalid C.Fn rows: " << invalidCfn << '\n'
         << "Split raw columns: " << splitRawColumns << '\n';

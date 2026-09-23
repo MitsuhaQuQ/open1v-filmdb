@@ -8,6 +8,8 @@ One row represents one completed camera download.
 
 - `id` — primary key
 - `imported_at` — SQLite UTC timestamp
+- `import_date` — local system date at import time, formatted as `YYYY-MM-DD`
+- `import_time` — local system time at import time, formatted as `HH:MM:SS`
 - `source_type` — automatic serial detection, an explicit COM port, or WinUSB
 - `parser_version` — schema/parser version used for the import
 - `reported_rolls` — roll-segment count returned by E1

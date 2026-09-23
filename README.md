@@ -82,7 +82,7 @@ The default database is `film-records.sqlite3` beside `film-record.exe`, indepen
 
 The database contains three main tables:
 
-- `imports` — one row for each completed download
+- `imports` — one row for each completed download, including separate local-system import date and time fields
 - `rolls` — decoded E3 roll metadata and the complete `raw_e3` packet
 - `frames` — decoded E4 frame data and the complete `raw_e4` packet
 

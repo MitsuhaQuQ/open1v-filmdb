@@ -200,7 +200,9 @@ void selfTest() {
     frame.cfnValues = "0,1,0,3,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0";
     filmrecorder::saveToDatabase(testDb, fixture, "self-test");
     const auto report = filmrecorder::inspectDatabase(testDb);
-    if (report.find("Frames: 1") == std::string::npos || report.find("Invalid C.Fn rows: 0") == std::string::npos)
+    if (report.find("Frames: 1") == std::string::npos ||
+        report.find("Invalid import date/time rows: 0") == std::string::npos ||
+        report.find("Invalid C.Fn rows: 0") == std::string::npos)
         throw std::runtime_error("database self-test verification failed");
     std::filesystem::remove(testDb, ignored);
     std::cout << "Self-test passed.\n";
