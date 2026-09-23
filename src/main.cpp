@@ -211,29 +211,30 @@ std::optional<std::size_t> menuIndex(const std::string& input,
 
 struct ShootingDataField {
     const char* name;
+    unsigned bytes;
     std::array<std::uint8_t,8> bits;
 };
 
 const std::array<ShootingDataField,18>& shootingDataFields() {
     static const std::array<ShootingDataField,18> fields{{
-        {"Focal length",                 {0x30,0,0,0,0,0,0,0}},
-        {"Maximum aperture",             {0x08,0,0,0,0,0,0,0}},
-        {"Shutter speed",                {0x04,0,0,0,0,0,0,0}},
-        {"Selected aperture",             {0x02,0,0,0,0,0,0,0}},
-        {"Manual ISO",                    {0x01,0,0,0,0,0,0,0}},
-        {"Exposure compensation",         {0,0x80,0,0,0,0,0,0}},
-        {"Flash exposure compensation",   {0,0x40,0,0,0,0,0,0}},
-        {"Flash mode",                    {0,0x20,0,0,0,0,0,0}},
-        {"Metering mode",                 {0,0x10,0,0,0,0,0,0}},
-        {"Film advance",                  {0,0x04,0,0,0,0,0,0}},
-        {"AF mode",                       {0,0x02,0,0,0,0,0,0}},
-        {"Bulb exposure time",            {0,0,0x0c,0,0,0,0,0}},
-        {"Shooting date",                 {0,0,0,0x38,0,0,0,0}},
-        {"Shooting time",                 {0,0,0,0x07,0,0,0,0}},
-        {"C.Fn settings",                 {0,0,0,0,0x7f,0xf0,0,0}},
-        {"Focus-point selection",         {0,0,0,0,0,0x08,0,0}},
-        {"In-focus point data",           {0,0,0,0,0,0,0x7f,0}},
-        {"Battery-load date/time",        {0,0,0,0,0,0,0,0x3f}}
+        {"Focal length",                 2,{0x30,0,0,0,0,0,0,0}},
+        {"Maximum aperture",             1,{0x08,0,0,0,0,0,0,0}},
+        {"Shutter speed",                1,{0x04,0,0,0,0,0,0,0}},
+        {"Selected aperture",            1,{0x02,0,0,0,0,0,0,0}},
+        {"Manual ISO",                   1,{0x01,0,0,0,0,0,0,0}},
+        {"Exposure compensation",        1,{0,0x80,0,0,0,0,0,0}},
+        {"Flash exposure compensation",  1,{0,0x40,0,0,0,0,0,0}},
+        {"Flash mode",                   1,{0,0x20,0,0,0,0,0,0}},
+        {"Metering mode",                1,{0,0x10,0,0,0,0,0,0}},
+        {"Film advance",                 1,{0,0x04,0,0,0,0,0,0}},
+        {"AF mode",                      1,{0,0x02,0,0,0,0,0,0}},
+        {"Bulb exposure time",           2,{0,0,0x0c,0,0,0,0,0}},
+        {"Shooting date",                3,{0,0,0,0x38,0,0,0,0}},
+        {"Shooting time",                3,{0,0,0,0x07,0,0,0,0}},
+        {"C.Fn settings",               11,{0,0,0,0,0x7f,0xf0,0,0}},
+        {"Focus-point selection",        1,{0,0,0,0,0,0x08,0,0}},
+        {"In-focus point data",          7,{0,0,0,0,0,0,0x7f,0}},
+        {"Battery-load date/time",       6,{0,0,0,0,0,0,0,0x3f}}
     }};
     return fields;
 }
@@ -257,6 +258,13 @@ bool fieldEnabled(const std::array<std::uint8_t,8>& mask,
     return true;
 }
 
+unsigned selectedShootingDataBytes(const std::array<std::uint8_t,8>& mask) {
+    unsigned total=0;
+    for (const auto& field:shootingDataFields())
+        if (fieldEnabled(mask,field)) total+=field.bytes;
+    return total;
+}
+
 void setShootingData(const Options& options) {
     for (;;) {
         auto transport=makeTransport(options);
@@ -264,14 +272,21 @@ void setShootingData(const Options& options) {
         open1v::CameraProtocolSession camera(bridge);
         auto mask=shootingMask(camera.readOnce(open1v::CameraRead::settings));
         const auto& fields=shootingDataFields();
-        std::cout << "\nFilm shooting-data fields\n"
-                  << "Current internal record length: "
-                  << unsigned(open1v::shootingDataRecordWidth(mask))
-                  << " bytes\n";
-        for (std::size_t i=0;i<fields.size();++i)
-            std::cout << i+1 << ") [" << (fieldEnabled(mask,fields[i])?"ON ":"OFF")
-                      << "] " << fields[i].name << '\n';
-        std::cout << "q) Back\nset/field> " << std::flush;
+        const auto usedBytes=selectedShootingDataBytes(mask);
+        std::cout << "\nFilm shooting-data fields\n";
+        for (std::size_t i=0;i<fields.size();++i) {
+            const bool enabled=fieldEnabled(mask,fields[i]);
+            std::cout << i+1 << ") [" << (enabled?"ON ":"OFF")
+                      << "] " << fields[i].name << " {" << fields[i].bytes
+                      << (fields[i].bytes==1?" byte}":" bytes}");
+            if (!enabled && usedBytes+fields[i].bytes>28)
+                std::cout << " - cannot enable: limit exceeded";
+            std::cout << '\n';
+        }
+        std::cout << "Current usage: " << usedBytes
+                  << "/28 bytes | Internal record length: "
+                  << unsigned(open1v::shootingDataRecordWidth(mask)) << " bytes\n"
+                  << "q) Back\nset/field> " << std::flush;
         std::string input;
         if (!std::getline(std::cin,input)) return;
         input=normalized(input);
@@ -291,6 +306,15 @@ void setShootingData(const Options& options) {
         if (!state) { std::cout << "Invalid selection.\n"; continue; }
         const bool enabled=*state==0;
         if (enabled==current) { std::cout << "Setting is already unchanged.\n"; continue; }
+        const auto currentBytes=selectedShootingDataBytes(mask);
+        if (enabled && currentBytes+field.bytes>28) {
+            std::cout << "Cannot enable " << field.name << ": it needs "
+                      << field.bytes << (field.bytes==1?" byte":" bytes")
+                      << ", but only " << 28-currentBytes
+                      << (28-currentBytes==1?" byte is":" bytes are")
+                      << " available.\n";
+            continue;
+        }
         for (std::size_t i=0;i<mask.size();++i) {
             if(enabled)mask[i]|=field.bits[i];
             else mask[i]&=static_cast<std::uint8_t>(~field.bits[i]);
