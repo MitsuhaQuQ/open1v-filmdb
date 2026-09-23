@@ -406,34 +406,34 @@ std::string describeFrame(const std::filesystem::path& path,
         return value ? reinterpret_cast<const char*>(value) : "n/a";
     };
     std::ostringstream out;
-    out << "Import Date: " << field(0)
-        << " | Import Time: " << field(1)
-        << " | Import ID: " << field(2)
-        << " | Roll ID: " << field(3)
-        << " | Film ID: " << field(4)
-        << " | Record Width: " << field(5)
-        << " | DX ISO: " << field(6)
-        << " | Loaded At: " << field(7)
-        << " | Frame Index: " << field(8)
-        << " | Frame Number: " << field(9)
-        << " | Focal Length (mm): " << field(10)
-        << " | Maximum Aperture (f): " << field(11)
-        << " | Shutter Time (seconds): " << field(12)
-        << " | Shutter Display: " << field(13)
-        << " | Aperture (f): " << field(14)
-        << " | Manual ISO: " << field(15)
-        << " | Exposure Compensation (EV): " << field(16)
-        << " | Flash Compensation (EV): " << field(17)
-        << " | Flash Mode: " << field(18)
-        << " | Metering Mode: " << field(19)
-        << " | Shooting Mode: " << field(20)
-        << " | Film Advance: " << field(21)
-        << " | AF Mode: " << field(22)
-        << " | Multiple Exposure: " << field(23)
-        << " | Bulb Time Units: " << field(24)
-        << " | Captured At: " << field(25)
-        << " | C.Fn Values: " << field(26)
-        << " | Battery Loaded At: " << field(27) << "\n\n";
+    out << "Import Date: " << field(0) << '\n'
+        << "Import Time: " << field(1) << '\n'
+        << "Import ID: " << field(2) << '\n'
+        << "Roll ID: " << field(3) << '\n'
+        << "Film ID: " << field(4) << '\n'
+        << "Record Width: " << field(5) << '\n'
+        << "DX ISO: " << field(6) << '\n'
+        << "Loaded At: " << field(7) << '\n'
+        << "Frame Index: " << field(8) << '\n'
+        << "Frame Number: " << field(9) << '\n'
+        << "Focal Length (mm): " << field(10) << '\n'
+        << "Maximum Aperture (f): " << field(11) << '\n'
+        << "Shutter Time (seconds): " << field(12) << '\n'
+        << "Shutter Display: " << field(13) << '\n'
+        << "Aperture (f): " << field(14) << '\n'
+        << "Manual ISO: " << field(15) << '\n'
+        << "Exposure Compensation (EV): " << field(16) << '\n'
+        << "Flash Compensation (EV): " << field(17) << '\n'
+        << "Flash Mode: " << field(18) << '\n'
+        << "Metering Mode: " << field(19) << '\n'
+        << "Shooting Mode: " << field(20) << '\n'
+        << "Film Advance: " << field(21) << '\n'
+        << "AF Mode: " << field(22) << '\n'
+        << "Multiple Exposure: " << field(23) << '\n'
+        << "Bulb Time Units: " << field(24) << '\n'
+        << "Captured At: " << field(25) << '\n'
+        << "C.Fn Values: " << field(26) << '\n'
+        << "Battery Loaded At: " << field(27) << "\n\n";
     sqlite3_finalize(statement);
     return out.str();
 }
