@@ -42,19 +42,81 @@ Visual Studio with the Desktop development with C++ workload is required:
 
 The Release executable is written to `x64\Release\film-record.exe`.
 
-### macOS and Linux
+### macOS
 
-A C++20 compiler, CMake 3.20 or newer, and SQLite 3 development files are
-required. macOS provides SQLite through the SDK. On Linux, install the SQLite
-development package supplied by the distribution, then run:
+Install the Apple command-line developer tools and CMake. SQLite is normally
+provided by the macOS SDK:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+xcode-select --install
+brew install cmake
+```
+
+Homebrew is only needed for the `brew` command above. If CMake cannot find the
+SDK copy of SQLite, install the Homebrew package and provide its prefix:
+
+```sh
+brew install sqlite
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix sqlite)"
+cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The executable is written to `build/film-record`.
+For the normal SDK configuration:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The executable is written to `build/film-record`. Both Intel and Apple Silicon
+use the same commands. Serial devices normally appear as `/dev/cu.usbmodem*`;
+prefer the `/dev/cu.*` device for an outgoing connection.
+
+### Linux
+
+A C++20 compiler, CMake 3.20 or newer, pthread support, and the SQLite 3
+development package are required. Install them with the distribution package
+manager. Examples:
+
+```sh
+# Debian / Ubuntu
+sudo apt update
+sudo apt install build-essential cmake libsqlite3-dev
+
+# Fedora
+sudo dnf install gcc-c++ cmake sqlite-devel
+
+# Arch Linux
+sudo pacman -S --needed base-devel cmake sqlite
+```
+
+Then configure, build, and run the offline tests:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The executable is written to `build/film-record`. UNO R4 serial devices
+normally appear as `/dev/ttyACM0` or another `/dev/ttyACM*` path. If opening the
+device reports permission denied, add the current user to the distribution's
+serial-device group, then sign out and back in:
+
+```sh
+# Debian / Ubuntu and many other distributions
+sudo usermod -aG dialout "$USER"
+
+# Arch Linux commonly uses uucp instead
+sudo usermod -aG uucp "$USER"
+```
+
+Do not run `film-record` as root merely to bypass serial permissions. See the
+[macOS and Linux build guide](docs/build-macos-linux.md) for generator choices,
+SQLite discovery, device checks, and troubleshooting.
 
 ## Usage
 
@@ -133,7 +195,9 @@ The full `command - description` table is printed whenever control returns to th
 
 The clear operation sends the verified, parameterless E2 command exactly once, keeps the same PC session open, and polls E1 until it reports zero rolls before refreshing FC. If the acknowledgement or verification is uncertain, the application reports an error and does not automatically retry the destructive command. The session remains open until `stop`.
 
-The camera must be in PC mode before each new connection. A completed download exits PC mode normally.
+The camera must be in PC mode before each new connection. In interactive mode,
+camera operations retain the session until `stop`; non-interactive operations
+close it before the process exits.
 
 ## SQLite storage
 
@@ -156,3 +220,4 @@ Recognized fields include DX/manual ISO, focal length, maximum and selected aper
 - [E3/E4/EFD film-record field map](docs/e3-e4-efd-field-map.md)
 - [SQLite data model](docs/data-model.md)
 - [Test fixture policy](fixtures/README.md)
+- [macOS and Linux build guide](docs/build-macos-linux.md)
