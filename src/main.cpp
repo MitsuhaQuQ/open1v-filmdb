@@ -264,7 +264,10 @@ void setShootingData(const Options& options) {
         open1v::CameraProtocolSession camera(bridge);
         auto mask=shootingMask(camera.readOnce(open1v::CameraRead::settings));
         const auto& fields=shootingDataFields();
-        std::cout << "\nFilm shooting-data fields\n";
+        std::cout << "\nFilm shooting-data fields\n"
+                  << "Current internal record length: "
+                  << unsigned(open1v::shootingDataRecordWidth(mask))
+                  << " bytes\n";
         for (std::size_t i=0;i<fields.size();++i)
             std::cout << i+1 << ") [" << (fieldEnabled(mask,fields[i])?"ON ":"OFF")
                       << "] " << fields[i].name << '\n';
@@ -292,6 +295,9 @@ void setShootingData(const Options& options) {
             if(enabled)mask[i]|=field.bits[i];
             else mask[i]&=static_cast<std::uint8_t>(~field.bits[i]);
         }
+        std::cout << "Resulting internal record length: "
+                  << unsigned(open1v::shootingDataRecordWidth(mask))
+                  << " bytes\n";
         std::cout << "Warning: changing recorded fields can split a partially shot film "
                      "into a new logical roll segment.\nApply and verify this change? [y/n]: "
                   << std::flush;
@@ -486,6 +492,13 @@ void interactive(const Options& options) {
 void selfTest() {
     std::string error;
     if (!filmrecorder::runSelfTest(error)) throw std::runtime_error("Self-test failed: " + error);
+    if (open1v::shootingDataRecordWidth(
+            {0xf6,0x09,0,0,0,0,0,0}) != 0x08 ||
+        open1v::shootingDataRecordWidth(
+            {0xff,0xff,0,0,0,0,0,0}) != 0x10 ||
+        open1v::shootingDataRecordWidth(
+            {0xff,0xff,0x0c,0x3f,0,0x08,0x7f,0}) != 0x20)
+        throw std::runtime_error("shooting-data record-width self-test failed");
     const auto testDb = std::filesystem::temp_directory_path() / "film-record-self-test.sqlite3";
     std::error_code ignored; std::filesystem::remove(testDb, ignored);
     filmrecorder::Download fixture; fixture.reportedRolls = 1; fixture.rolls.emplace_back();
