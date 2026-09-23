@@ -49,6 +49,7 @@ struct FilmFrame {
     std::string flashMode;
     std::string meteringMode;
     std::string shootingMode;
+    std::optional<std::string> aebPosition;
     std::string filmAdvance;
     std::string afMode;
     bool multipleExposure{};

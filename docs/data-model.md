@@ -37,7 +37,7 @@ One row represents one E4 shooting record.
 - `shutter_seconds`, `shutter_display`
 - `manual_iso`
 - `exposure_compensation_ev`, `flash_compensation_ev`
-- `flash_mode`, `metering_mode`, `shooting_mode`
+- `flash_mode`, `metering_mode`, `shooting_mode`, optional `aeb_position`
 - `film_advance`, `af_mode`, `multiple_exposure`
 - `bulb_time_units`
 - `captured_at`

@@ -327,11 +327,20 @@ void selfTest() {
     frame.shutterDisplay = "1/256 s"; frame.aperturePresent = true; frame.apertureWire = 0x18;
     frame.apertureF = 8.0; frame.shootingMode = "Aperture-priority AE"; frame.rawHex = "E4";
     frame.cfnValues = "0,1,0,3,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0";
+    roll.frames.push_back(frame); auto& markedFrame = roll.frames.back();
+    markedFrame.number = 2; markedFrame.aebPosition = "Underexposed";
+    markedFrame.multipleExposure = true;
     filmrecorder::saveToDatabase(testDb, fixture, "self-test");
     const auto report = filmrecorder::inspectDatabase(testDb);
-    if (report.find("Frames: 1") == std::string::npos ||
+    const auto plainDetail = filmrecorder::describeFrame(testDb, 1);
+    const auto markedDetail = filmrecorder::describeFrame(testDb, 2);
+    if (report.find("Frames: 2") == std::string::npos ||
         report.find("Invalid import date/time rows: 0") == std::string::npos ||
-        report.find("Invalid C.Fn rows: 0") == std::string::npos)
+        report.find("Invalid C.Fn rows: 0") == std::string::npos ||
+        plainDetail.find("AEB Position:") != std::string::npos ||
+        plainDetail.find("Multiple Exposure:") != std::string::npos ||
+        markedDetail.find("AEB Position: Underexposed") == std::string::npos ||
+        markedDetail.find("Multiple Exposure: Yes") == std::string::npos)
         throw std::runtime_error("database self-test verification failed");
     std::filesystem::remove(testDb, ignored);
     std::cout << "Self-test passed.\n";

@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS frames (
  frame_index INTEGER NOT NULL, frame_number INTEGER, focal_length_mm INTEGER,
  max_aperture_f REAL, shutter_seconds REAL, shutter_display TEXT, aperture_f REAL,
  manual_iso INTEGER, exposure_compensation_ev REAL, flash_compensation_ev REAL,
- flash_mode TEXT, metering_mode TEXT, shooting_mode TEXT, film_advance TEXT, af_mode TEXT,
+ flash_mode TEXT, metering_mode TEXT, shooting_mode TEXT, aeb_position TEXT, film_advance TEXT, af_mode TEXT,
  multiple_exposure INTEGER, bulb_time_units INTEGER, captured_at TEXT,
  cfn_values TEXT, battery_loaded_at TEXT, raw_e4 TEXT NOT NULL,
  UNIQUE(roll_id, frame_index)
@@ -124,8 +124,36 @@ void migrate(Database& db) {
     db.exec("UPDATE imports SET import_date=substr(imported_at,1,10) WHERE import_date IS NULL");
     db.exec("UPDATE imports SET import_time=substr(imported_at,12,8) WHERE import_time IS NULL");
 
+    if (!columnExists(db.get(), "frames", "aeb_position"))
+        db.exec("ALTER TABLE frames ADD COLUMN aeb_position TEXT");
+
+    const auto redecodeKnownValues = [&db] {
+        // Re-decode values retained by earlier parser versions without needing
+        // the original camera to be connected again.
+        db.exec(R"SQL(
+UPDATE frames SET
+ aeb_position=CASE shooting_mode
+   WHEN 'Unknown(0x41)' THEN 'Standard exposure'
+   WHEN 'Unknown(0x42)' THEN 'Underexposed'
+   WHEN 'Unknown(0x43)' THEN 'Overexposed' END,
+ shooting_mode='Aperture-priority AE'
+WHERE shooting_mode IN ('Unknown(0x41)','Unknown(0x42)','Unknown(0x43)');
+UPDATE frames AS target SET multiple_exposure=1
+WHERE EXISTS (
+ SELECT 1 FROM frames AS marker
+ WHERE marker.roll_id=target.roll_id
+   AND marker.frame_number=target.frame_number
+   AND marker.film_advance='Unknown(0x88)')
+AND (SELECT count(*) FROM frames AS member
+     WHERE member.roll_id=target.roll_id
+       AND member.frame_number=target.frame_number) > 1;
+UPDATE frames SET film_advance='Single-frame'
+WHERE film_advance='Unknown(0x88)';
+)SQL");
+    };
+
     const bool legacy = columnExists(db.get(), "frames", "max_aperture_wire");
-    if (!legacy) return;
+    if (!legacy) { redecodeKnownValues(); return; }
     const std::array<std::tuple<const char*,const char*,const char*>,18> columns{{
         {"rolls","dx_iso","INTEGER"},
         {"frames","max_aperture_f","REAL"},{"frames","shutter_seconds","REAL"},
@@ -156,16 +184,16 @@ CREATE TABLE frames_new (
  frame_index INTEGER NOT NULL, frame_number INTEGER, focal_length_mm INTEGER,
  max_aperture_f REAL, shutter_seconds REAL, shutter_display TEXT, aperture_f REAL,
  manual_iso INTEGER, exposure_compensation_ev REAL, flash_compensation_ev REAL,
- flash_mode TEXT, metering_mode TEXT, shooting_mode TEXT, film_advance TEXT, af_mode TEXT,
+ flash_mode TEXT, metering_mode TEXT, shooting_mode TEXT, aeb_position TEXT, film_advance TEXT, af_mode TEXT,
  multiple_exposure INTEGER, bulb_time_units INTEGER, captured_at TEXT,
  cfn_values TEXT, battery_loaded_at TEXT, raw_e4 TEXT NOT NULL, UNIQUE(roll_id,frame_index));
 INSERT INTO frames_new(id,roll_id,frame_index,frame_number,focal_length_mm,max_aperture_f,
  shutter_seconds,shutter_display,aperture_f,manual_iso,exposure_compensation_ev,
- flash_compensation_ev,flash_mode,metering_mode,shooting_mode,film_advance,af_mode,
+ flash_compensation_ev,flash_mode,metering_mode,shooting_mode,aeb_position,film_advance,af_mode,
  multiple_exposure,bulb_time_units,captured_at,cfn_values,battery_loaded_at,raw_e4)
  SELECT id,roll_id,frame_index,frame_number,focal_length_mm,max_aperture_f,
  shutter_seconds,shutter_display,aperture_f,manual_iso,exposure_compensation_ev,
- flash_compensation_ev,flash_mode,metering_mode,shooting_mode,film_advance,af_mode,
+ flash_compensation_ev,flash_mode,metering_mode,shooting_mode,aeb_position,film_advance,af_mode,
  multiple_exposure,bulb_time_wire,captured_at,cfn_values,battery_loaded_at,raw_e4 FROM frames;
 DROP TABLE frames;
 DROP TABLE rolls;
@@ -177,6 +205,7 @@ COMMIT;
 )SQL");
         db.exec("PRAGMA foreign_keys=ON");
     }
+    redecodeKnownValues();
 }
 
 std::pair<std::string, std::string> localImportDateTime() {
@@ -259,7 +288,7 @@ SaveResult saveToDatabase(const std::filesystem::path& path,
         addImport.text(3, sourceType); addImport.integer(4, download.reportedRolls); addImport.done();
         const auto importId = sqlite3_last_insert_rowid(db.get());
         Statement addRoll(db.get(), "INSERT INTO rolls(import_id,roll_index,film_id,record_width,dx_iso,loaded_at,raw_e3) VALUES(?,?,?,?,?,?,?)");
-        Statement addFrame(db.get(), "INSERT INTO frames(roll_id,frame_index,frame_number,focal_length_mm,max_aperture_f,shutter_seconds,shutter_display,aperture_f,manual_iso,exposure_compensation_ev,flash_compensation_ev,flash_mode,metering_mode,shooting_mode,film_advance,af_mode,multiple_exposure,bulb_time_units,captured_at,cfn_values,battery_loaded_at,raw_e4) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        Statement addFrame(db.get(), "INSERT INTO frames(roll_id,frame_index,frame_number,focal_length_mm,max_aperture_f,shutter_seconds,shutter_display,aperture_f,manual_iso,exposure_compensation_ev,flash_compensation_ev,flash_mode,metering_mode,shooting_mode,aeb_position,film_advance,af_mode,multiple_exposure,bulb_time_units,captured_at,cfn_values,battery_loaded_at,raw_e4) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         std::size_t frameTotal = 0;
         for (std::size_t r = 0; r < download.rolls.size(); ++r) {
             const auto& roll = download.rolls[r];
@@ -279,11 +308,12 @@ SaveResult saveToDatabase(const std::filesystem::path& path,
                 if(frame.flashModePresent)addFrame.text(12,frame.flashMode);else addFrame.null(12);
                 if(frame.meteringPresent)addFrame.text(13,frame.meteringMode);else addFrame.null(13);
                 addFrame.text(14,frame.shootingMode);
-                if(frame.filmAdvancePresent)addFrame.text(15,frame.filmAdvance);else addFrame.null(15);
-                if(frame.afModePresent)addFrame.text(16,frame.afMode);else addFrame.null(16);
-                addFrame.integer(17,frame.multipleExposure); addFrame.optionalInteger(18,frame.bulbTimeWire);
-                addFrame.nullableText(19,frame.capturedAt); addFrame.nullableText(20,frame.cfnValues);
-                addFrame.nullableText(21,frame.batteryLoadedAt); addFrame.text(22,frame.rawHex); addFrame.done();
+                addFrame.nullableText(15,frame.aebPosition);
+                if(frame.filmAdvancePresent)addFrame.text(16,frame.filmAdvance);else addFrame.null(16);
+                if(frame.afModePresent)addFrame.text(17,frame.afMode);else addFrame.null(17);
+                addFrame.integer(18,frame.multipleExposure); addFrame.optionalInteger(19,frame.bulbTimeWire);
+                addFrame.nullableText(20,frame.capturedAt); addFrame.nullableText(21,frame.cfnValues);
+                addFrame.nullableText(22,frame.batteryLoadedAt); addFrame.text(23,frame.rawHex); addFrame.done();
                 ++frameTotal;
             }
         }
@@ -446,7 +476,7 @@ std::string describeFrame(const std::filesystem::path& path,
                f.max_aperture_f, f.shutter_seconds, f.shutter_display,
                f.aperture_f, f.manual_iso, f.exposure_compensation_ev,
                f.flash_compensation_ev, f.flash_mode, f.metering_mode,
-               f.shooting_mode, f.film_advance, f.af_mode,
+               f.shooting_mode, f.aeb_position, f.film_advance, f.af_mode,
                f.multiple_exposure, f.bulb_time_units, f.captured_at,
                f.cfn_values, f.battery_loaded_at
         FROM frames f
@@ -485,14 +515,17 @@ std::string describeFrame(const std::filesystem::path& path,
         << "Flash Compensation (EV): " << field(17) << '\n'
         << "Flash Mode: " << field(18) << '\n'
         << "Metering Mode: " << field(19) << '\n'
-        << "Shooting Mode: " << field(20) << '\n'
-        << "Film Advance: " << field(21) << '\n'
-        << "AF Mode: " << field(22) << '\n'
-        << "Multiple Exposure: " << field(23) << '\n'
-        << "Bulb Time Units: " << field(24) << '\n'
-        << "Captured At: " << field(25) << '\n'
-        << "C.Fn Values: " << field(26) << '\n'
-        << "Battery Loaded At: " << field(27) << "\n\n";
+        << "Shooting Mode: " << field(20) << '\n';
+    if (sqlite3_column_type(statement, 21) != SQLITE_NULL)
+        out << "AEB Position: " << field(21) << '\n';
+    out << "Film Advance: " << field(22) << '\n'
+        << "AF Mode: " << field(23) << '\n';
+    if (sqlite3_column_int(statement, 24) != 0)
+        out << "Multiple Exposure: Yes\n";
+    out << "Bulb Time Units: " << field(25) << '\n'
+        << "Captured At: " << field(26) << '\n'
+        << "C.Fn Values: " << field(27) << '\n'
+        << "Battery Loaded At: " << field(28) << "\n\n";
     sqlite3_finalize(statement);
     return out.str();
 }

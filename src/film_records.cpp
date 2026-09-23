@@ -135,18 +135,28 @@ std::string metering(std::uint8_t wire) {
     }
 }
 std::string shooting(std::uint8_t wire) {
-    switch (wire) {
+    switch (wire & 0xfc) {
     case 0x80:return "Manual"; case 0x10:return "Program AE"; case 0x20:return "Shutter-priority AE";
     case 0x40:return "Aperture-priority AE"; case 0x08:return "Depth-of-field AE";
     case 0x04:return "Bulb"; default:return unknown(wire);
     }
 }
 std::string advance(std::uint8_t wire) {
-    switch (wire) {
+    switch (wire & 0x7f) {
     case 0x08:return "Single-frame"; case 0x10:return "2-sec self-timer";
     case 0x20:return "10-sec self-timer"; case 0x40:return "Continuous (body)";
     case 0x01:return "Low-speed continuous"; case 0x02:return "High-speed continuous";
     default:return unknown(wire);
+    }
+}
+
+std::optional<std::string> aebPosition(std::uint8_t wire) {
+    if ((wire & 0xfc) != 0x40) return std::nullopt;
+    switch (wire & 0x03) {
+    case 0x01:return "Standard exposure";
+    case 0x02:return "Underexposed";
+    case 0x03:return "Overexposed";
+    default:return std::nullopt;
     }
 }
 std::string af(std::uint8_t wire) {
@@ -224,7 +234,7 @@ Download parsePackets(const std::vector<open1v::CameraPacket>& packets) {
             if (enabled(mask,{{1,0x40}})) { frame.flashCompensationPresent=true; frame.flashCompensationWire=static_cast<std::int8_t>(*take(1)); frame.flashCompensationEv=frame.flashCompensationWire/8.0; }
             if (enabled(mask,{{1,0x20}})) { frame.flashModePresent=true; frame.flashModeWire=*take(1); frame.flashMode=flashMode(frame.flashModeWire); }
             if (enabled(mask,{{1,0x10}})) { frame.meteringPresent=true; frame.meteringWire=*take(1); frame.meteringMode=metering(frame.meteringWire); }
-            frame.shootingModeWire=*take(1); frame.shootingMode=shooting(frame.shootingModeWire);
+            frame.shootingModeWire=*take(1); frame.shootingMode=shooting(frame.shootingModeWire); frame.aebPosition=aebPosition(frame.shootingModeWire);
             if (enabled(mask,{{1,0x04}})) { frame.filmAdvancePresent=true; frame.filmAdvanceWire=*take(1); frame.filmAdvance=advance(frame.filmAdvanceWire); }
             if (enabled(mask,{{1,0x02}})) { frame.afModePresent=true; frame.afModeWire=*take(1); frame.afMode=af(frame.afModeWire); }
             frame.multipleExposureWire=*take(1); frame.multipleExposure=(frame.multipleExposureWire&0x80)!=0;
@@ -242,6 +252,22 @@ Download parsePackets(const std::vector<open1v::CameraPacket>& packets) {
     }
     if (result.rolls.size() != result.reportedRolls)
         throw std::runtime_error("parsed roll count does not match E1");
+    for (auto& roll : result.rolls) {
+        for (std::size_t begin = 0; begin < roll.frames.size();) {
+            std::size_t end = begin + 1;
+            while (end < roll.frames.size() &&
+                   roll.frames[end].number == roll.frames[begin].number) ++end;
+            bool marked = false;
+            for (std::size_t i = begin; i < end; ++i)
+                marked = marked || (roll.frames[i].filmAdvancePresent &&
+                                    (roll.frames[i].filmAdvanceWire & 0x80) != 0) ||
+                                    roll.frames[i].multipleExposure;
+            if (marked && end - begin > 1)
+                for (std::size_t i = begin; i < end; ++i)
+                    roll.frames[i].multipleExposure = true;
+            begin = end;
+        }
+    }
     return result;
 }
 
@@ -276,6 +302,7 @@ std::string toJson(const Download& download) {
                 << ", \"flash_mode_wire\": " << static_cast<unsigned>(frame.flashModeWire)
                 << ", \"metering_wire\": " << static_cast<unsigned>(frame.meteringWire)
                 << ", \"shooting_mode_wire\": " << static_cast<unsigned>(frame.shootingModeWire)
+                << ", \"aeb_position\": " << (frame.aebPosition ? jsonString(*frame.aebPosition) : "null")
                 << ", \"film_advance_wire\": " << static_cast<unsigned>(frame.filmAdvanceWire)
                 << ", \"af_mode_wire\": " << static_cast<unsigned>(frame.afModeWire)
                 << ", \"multiple_exposure_wire\": " << static_cast<unsigned>(frame.multipleExposureWire)
@@ -359,6 +386,26 @@ bool runSelfTest(std::string& error) {
         const auto depth = parsePackets(depthPackets);
         if (depth.rolls[0].frames[0].shootingMode != "Depth-of-field AE")
             throw std::runtime_error("depth-of-field AE shooting mode was not decoded");
+
+        std::vector<std::uint8_t> aebE4 = dynamicE4;
+        aebE4[8] = 0x41;
+        aebE4[9] = 0x08;
+        auto aebSecond = aebE4;
+        aebSecond[4] = 1;
+        aebSecond[8] = 0x42;
+        aebSecond[9] = 0x88;
+        const std::vector<open1v::CameraPacket> aebPackets{
+            {"FILM E1", e1}, {"FILM E3", dynamicE3}, {"FILM E4", aebE4},
+            {"FILM E4", aebSecond}, {"FILM E4", {0xe4,1,0,0}},
+            {"FILM E3", {0xe3,1,0,0}}};
+        const auto aeb = parsePackets(aebPackets);
+        if (aeb.rolls[0].frames[0].shootingMode != "Aperture-priority AE" ||
+            aeb.rolls[0].frames[0].aebPosition != "Standard exposure" ||
+            aeb.rolls[0].frames[1].aebPosition != "Underexposed" ||
+            aeb.rolls[0].frames[1].filmAdvance != "Single-frame" ||
+            !aeb.rolls[0].frames[0].multipleExposure ||
+            !aeb.rolls[0].frames[1].multipleExposure)
+            throw std::runtime_error("AEB or multiple-exposure markers were not decoded");
         return true;
     } catch (const std::exception& ex) { error = ex.what(); return false; }
 }

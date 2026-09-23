@@ -123,6 +123,9 @@ Additional low-bit flags are preserved.
 - `10` → Program AE
 - `20` → Shutter-priority AE
 - `40` → Aperture-priority AE
+- `41` → Aperture-priority AE, AEB standard exposure
+- `42` → Aperture-priority AE, AEB underexposed
+- `43` → Aperture-priority AE, AEB overexposed
 - `08` → Depth-of-field AE
 - `04` → Bulb
 
@@ -134,6 +137,11 @@ Additional low-bit flags are preserved.
 - `40` → Body-only continuous
 - `01` → Low-speed continuous
 - `02` → High-speed continuous
+
+Bit `80` is a multiple-exposure continuation marker, so `88` is decoded as
+single-frame advance plus multiple-exposure continuation. Consecutive records
+with the same frame number are treated as one multiple-exposure group when the
+continuation marker is present; the marker is backfilled to the first record.
 
 The E4 wire value for ultra-high-speed continuous is not yet confirmed.
 
