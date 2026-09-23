@@ -15,6 +15,14 @@ and storing Canon EOS-1V film shooting records.
 - Keeps unknown enum values visible as `Unknown(0xNN)` instead of guessing
 - Supports optional JSON and CSV exports
 
+## Application boundary
+
+`filmrecorder::syncFilmRecords` and `clearFilmRecords` are UI-independent use
+cases. They return structured results and never print or read terminal input.
+`ShootingDataSelection` owns field-mask validation, byte budgeting, toggling,
+and record-width calculation. The CLI only renders these models and forwards
+the user's choices, allowing a future GUI to reuse the same behavior.
+
 ## Clone
 
 The connection library is included as a Git submodule:

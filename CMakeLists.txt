@@ -12,6 +12,7 @@ add_subdirectory(external/open1V-cli EXCLUDE_FROM_ALL)
 set(BUILD_TESTING ${FILMDB_BUILD_TESTING})
 
 add_executable(film-record
+    src/application.cpp
     src/database.cpp
     src/film_records.cpp
     src/main.cpp)

@@ -22,8 +22,8 @@
     <ClCompile><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)external\open1V-cli\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile>
     <Link><SubSystem>Console</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation><AdditionalDependencies>setupapi.lib;winusb.lib;winsqlite3.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClInclude Include="include\filmrecorder\database.hpp" /><ClInclude Include="include\filmrecorder\film_records.hpp" /></ItemGroup>
-  <ItemGroup><ClCompile Include="src\database.cpp" /><ClCompile Include="src\film_records.cpp" /><ClCompile Include="src\main.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="include\filmrecorder\application.hpp" /><ClInclude Include="include\filmrecorder\database.hpp" /><ClInclude Include="include\filmrecorder\film_records.hpp" /></ItemGroup>
+  <ItemGroup><ClCompile Include="src\application.cpp" /><ClCompile Include="src\database.cpp" /><ClCompile Include="src\film_records.cpp" /><ClCompile Include="src\main.cpp" /></ItemGroup>
   <ItemGroup><ProjectReference Include="external\open1V-cli\open1v-core.vcxproj"><Project>{C671FC63-DA5D-4A4B-9D78-97DB43BD4A21}</Project></ProjectReference></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

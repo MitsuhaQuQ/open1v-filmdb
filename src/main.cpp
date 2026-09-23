@@ -1,3 +1,4 @@
+#include "filmrecorder/application.hpp"
 #include "filmrecorder/database.hpp"
 #include "filmrecorder/film_records.hpp"
 #include "open1v/bridge_client.hpp"
@@ -130,52 +131,24 @@ void syncRecords(Options options, open1v::CameraProtocolSession& camera,
             ? (executableDirectory() / "film-records.sqlite3").string()
             : "film-records." + options.format;
     }
-    std::vector<open1v::CameraPacket> packets;
-    try {
-        if (!camera.sessionActive()) camera.beginSession();
-        const auto status = camera.perform(open1v::CameraRead::filmStatus);
-        const auto e1 = std::find_if(status.begin(), status.end(),
-            [](const open1v::CameraPacket& packet) {
-                return packet.label == "FILM STATUS E1";
-            });
-        if (e1 == status.end() || e1->bytes.size() != 5)
-            throw std::runtime_error("camera did not return a valid film-record status");
-        const auto rollCount = static_cast<unsigned>(e1->bytes[2]) << 8 |
-                               static_cast<unsigned>(e1->bytes[3]);
-        if (rollCount == 0) {
-            if (!keepSession) camera.endSession();
-            std::cout << "Camera film-record storage is empty; nothing to sync.\n";
-            return;
-        }
-
-        std::cout << "Camera reports " << rollCount
-                  << " roll(s). Downloading film records...\n";
-        packets = camera.perform(open1v::CameraRead::filmRecords);
-        if (!keepSession) camera.endSession();
-    } catch (...) {
-        if (!keepSession) {
-            try { if (camera.sessionActive()) camera.endSession(); } catch (...) {}
-        }
-        throw;
+    const filmrecorder::SyncRequest request{
+        options.format == "sqlite" ? filmrecorder::ExportFormat::sqlite :
+        options.format == "json" ? filmrecorder::ExportFormat::json :
+                                   filmrecorder::ExportFormat::csv,
+        options.output,
+        options.winusb ? "winusb" :
+            (options.port.empty() ? "serial-auto" : options.port),
+        keepSession};
+    const auto result = filmrecorder::syncFilmRecords(camera, request);
+    if (result.cameraEmpty) {
+        std::cout << "Camera film-record storage is empty; nothing to sync.\n";
+        return;
     }
-    const auto download = filmrecorder::parsePackets(packets);
-    const std::filesystem::path path(options.output);
-    std::size_t frames = 0;
-    for (const auto& roll : download.rolls) frames += roll.frames.size();
-    if (options.format == "sqlite") {
-        const auto saved = filmrecorder::saveToDatabase(path, download,
-            options.winusb ? "winusb" : (options.port.empty() ? "serial-auto" : options.port.c_str()));
-        std::cout << "Saved import " << saved.importId << ": " << saved.rolls
-                  << " roll(s), " << saved.frames << " frame(s) to ";
-    } else {
-        if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
-        std::ofstream stream(path, std::ios::binary);
-        if (!stream) throw std::runtime_error("cannot open output file: " + options.output);
-        stream << (options.format == "json" ? filmrecorder::toJson(download) : filmrecorder::toCsv(download));
-        if (!stream) throw std::runtime_error("failed while writing output file: " + options.output);
-        std::cout << "Saved " << download.rolls.size() << " roll(s), " << frames << " frame(s) to ";
-    }
-    std::cout << std::filesystem::absolute(path).string() << '\n';
+    if (request.format == filmrecorder::ExportFormat::sqlite)
+        std::cout << "Saved import " << result.importId << ": ";
+    else std::cout << "Saved ";
+    std::cout << result.rolls << " roll(s), " << result.frames
+              << " frame(s) to " << result.output.string() << '\n';
 }
 
 void syncRecords(Options options) {
@@ -187,13 +160,7 @@ void syncRecords(Options options) {
 
 void clearRecords(open1v::CameraProtocolSession& camera, bool keepSession) {
     std::cout << "Clearing all film records from EOS-1V...\n";
-    try {
-        camera.clearFilmRecords();
-        if(!keepSession && camera.sessionActive())camera.endSession();
-    } catch(...) {
-        if(!keepSession){try{if(camera.sessionActive())camera.endSession();}catch(...) {}}
-        throw;
-    }
+    filmrecorder::clearFilmRecords(camera, keepSession);
     std::cout << "Camera film-record storage is empty (verified by E1).\n";
 }
 
@@ -226,73 +193,17 @@ std::optional<std::size_t> menuIndex(const std::string& input,
     return value - 1;
 }
 
-struct ShootingDataField {
-    const char* name;
-    unsigned bytes;
-    std::array<std::uint8_t,8> bits;
-};
-
-const std::array<ShootingDataField,18>& shootingDataFields() {
-    static const std::array<ShootingDataField,18> fields{{
-        {"Focal length",                 2,{0x30,0,0,0,0,0,0,0}},
-        {"Maximum aperture",             1,{0x08,0,0,0,0,0,0,0}},
-        {"Shutter speed",                1,{0x04,0,0,0,0,0,0,0}},
-        {"Selected aperture",            1,{0x02,0,0,0,0,0,0,0}},
-        {"Manual ISO",                   1,{0x01,0,0,0,0,0,0,0}},
-        {"Exposure compensation",        1,{0,0x80,0,0,0,0,0,0}},
-        {"Flash exposure compensation",  1,{0,0x40,0,0,0,0,0,0}},
-        {"Flash mode",                   1,{0,0x20,0,0,0,0,0,0}},
-        {"Metering mode",                1,{0,0x10,0,0,0,0,0,0}},
-        {"Film advance",                 1,{0,0x04,0,0,0,0,0,0}},
-        {"AF mode",                      1,{0,0x02,0,0,0,0,0,0}},
-        {"Bulb exposure time",           2,{0,0,0x0c,0,0,0,0,0}},
-        {"Shooting date",                3,{0,0,0,0x38,0,0,0,0}},
-        {"Shooting time",                3,{0,0,0,0x07,0,0,0,0}},
-        {"C.Fn settings",               11,{0,0,0,0,0x7f,0xf0,0,0}},
-        {"Focus-point selection",        1,{0,0,0,0,0,0x08,0,0}},
-        {"In-focus point data",          7,{0,0,0,0,0,0,0x7f,0}},
-        {"Battery-load date/time",       6,{0,0,0,0,0,0,0,0x3f}}
-    }};
-    return fields;
-}
-
-std::array<std::uint8_t,8> shootingMask(
-    const std::vector<open1v::CameraPacket>& packets) {
-    for (const auto& packet : packets) {
-        if (packet.bytes.size() == 11 && packet.bytes[0] == 0xe8) {
-            std::array<std::uint8_t,8> mask{};
-            std::copy_n(packet.bytes.begin()+2,mask.size(),mask.begin());
-            return mask;
-        }
-    }
-    throw std::runtime_error("camera did not return the shooting-data field mask");
-}
-
-bool fieldEnabled(const std::array<std::uint8_t,8>& mask,
-                  const ShootingDataField& field) {
-    for (std::size_t i=0;i<mask.size();++i)
-        if ((mask[i]&field.bits[i])!=field.bits[i]) return false;
-    return true;
-}
-
-unsigned selectedShootingDataBytes(const std::array<std::uint8_t,8>& mask) {
-    unsigned total=0;
-    for (const auto& field:shootingDataFields())
-        if (fieldEnabled(mask,field)) total+=field.bytes;
-    return total;
-}
-
 void setShootingData(open1v::CameraProtocolSession& camera) {
     if(!camera.sessionActive())camera.beginSession();
-    const auto original=shootingMask(camera.perform(open1v::CameraRead::settings));
-    auto mask=original;
-    const auto& fields=shootingDataFields();
+    auto selection=filmrecorder::ShootingDataSelection::fromPackets(
+        camera.perform(open1v::CameraRead::settings));
+    const auto& fields=filmrecorder::ShootingDataSelection::fields();
     for (;;) {
-        const auto usedBytes=selectedShootingDataBytes(mask);
+        const auto usedBytes=selection.usedBytes();
         std::cout << "\nFilm shooting-data fields\n";
         for (std::size_t i=0;i<fields.size();++i) {
-            const bool enabled=fieldEnabled(mask,fields[i]);
-            const bool changed=enabled!=fieldEnabled(original,fields[i]);
+            const bool enabled=selection.enabled(i);
+            const bool changed=selection.changed(i);
             std::cout << (changed?'*':' ') << i+1 << ") [" << (enabled?"ON ":"OFF")
                       << "] " << fields[i].name << " {" << fields[i].bytes
                       << (fields[i].bytes==1?" byte}":" bytes}");
@@ -302,7 +213,7 @@ void setShootingData(open1v::CameraProtocolSession& camera) {
         }
         std::cout << "Current usage: " << usedBytes
                   << "/28 bytes | Internal record length: "
-                  << unsigned(open1v::shootingDataRecordWidth(mask)) << " bytes\n"
+                  << selection.recordWidth() << " bytes\n"
                   << "* marks staged changes\n"
                   << "Enter 1..18 to toggle, commit, discard, or q\nset> " << std::flush;
         std::string input;
@@ -313,13 +224,13 @@ void setShootingData(open1v::CameraProtocolSession& camera) {
             return;
         }
         if(input=="commit") {
-            if(mask==original) {
+            if(!selection.dirty()) {
                 std::cout << "No shooting-data changes to commit.\n";
                 return;
             }
             std::cout << "Warning: changing recorded fields can split a partially shot film "
                          "into a new logical roll segment.\n";
-            camera.setShootingDataMask(mask);
+            camera.setShootingDataMask(selection.mask());
             std::cout << "Shooting-data changes committed and verified.\n";
             return;
         }
@@ -327,9 +238,9 @@ void setShootingData(open1v::CameraProtocolSession& camera) {
         if (!selected) { std::cout << "Invalid selection.\n"; continue; }
 
         const auto& field=fields[*selected];
-        const bool current=fieldEnabled(mask,field);
+        const bool current=selection.enabled(*selected);
         const bool enabled=!current;
-        const auto currentBytes=selectedShootingDataBytes(mask);
+        const auto currentBytes=selection.usedBytes();
         if (enabled && currentBytes+field.bytes>28) {
             std::cout << "Cannot enable " << field.name << ": it needs "
                       << field.bytes << (field.bytes==1?" byte":" bytes")
@@ -338,14 +249,8 @@ void setShootingData(open1v::CameraProtocolSession& camera) {
                       << " available.\n";
             continue;
         }
-        auto staged=mask;
-        for (std::size_t i=0;i<staged.size();++i) {
-            if(enabled)staged[i]|=field.bits[i];
-            else staged[i]&=static_cast<std::uint8_t>(~field.bits[i]);
-        }
         try {
-            (void)open1v::shootingDataRecordWidth(staged);
-            mask=staged;
+            selection.toggle(*selected);
         } catch(const std::exception& ex) {
             std::cout << "Cannot toggle " << field.name << ": " << ex.what() << ".\n";
         }
@@ -561,6 +466,13 @@ void selfTest() {
         open1v::shootingDataRecordWidth(
             {0xff,0xff,0x0c,0x3f,0,0x08,0x7f,0}) != 0x20)
         throw std::runtime_error("shooting-data record-width self-test failed");
+    std::vector<open1v::CameraPacket> settingPackets{{
+        "E8", {0xe8,0x08,0xf6,0x09,0,0,0,0,0,0,0}}};
+    auto selection=filmrecorder::ShootingDataSelection::fromPackets(settingPackets);
+    const auto initialBytes=selection.usedBytes();
+    selection.toggle(0);
+    if(!selection.dirty() || selection.usedBytes()==initialBytes)
+        throw std::runtime_error("shooting-data selection model self-test failed");
     const auto testDb = std::filesystem::temp_directory_path() / "film-record-self-test.sqlite3";
     std::error_code ignored; std::filesystem::remove(testDb, ignored);
     filmrecorder::Download fixture; fixture.reportedRolls = 1; fixture.rolls.emplace_back();
