@@ -72,7 +72,7 @@ Interactive mode accepts these commands:
 
 - `sync` first checks the camera's E1 roll count. If it is zero, the command returns without creating an empty import; otherwise it downloads and decodes all film records into the local SQLite database.
 - `clear` permanently deletes all film records stored by the camera. It requires an explicit `y`; entering `n` returns to the prompt without changing the camera.
-- `view` opens the database browser at the current month. Dates, rolls, and frames use numbered menus; `p` and `n` change month immediately without Enter, and `q` returns to the preceding menu. The first frame level shows only Index, Shutter Speed, Aperture, and Shooting Date/Time. Selecting a frame displays one decoded `Field: value` entry per line; missing values display as `n/a`. The 19 comma-separated C.Fn option numbers remain together as one `C.Fn Values` entry.
+- `view` opens the database browser at the current month. Dates, rolls, and frames use numbered menus; `p` and `n` change month immediately without Enter, and `q` returns to the preceding menu. The first frame level shows Index, Shutter Speed, nominal 1/3-stop Aperture, ISO, Focal Length, and Shooting Date/Time. ISO prefers the roll's DX value and falls back to the frame's manual ISO. Selecting a frame displays one decoded `Field: value` entry per line; all aperture values use nominal 1/3-stop notation and missing values display as `n/a`. The 19 comma-separated C.Fn option numbers remain together as one `C.Fn Values` entry.
 - `help` shows the command list.
 - `exit` closes the program.
 

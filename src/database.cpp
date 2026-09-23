@@ -4,6 +4,7 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <iomanip>
 #include <stdexcept>
@@ -191,6 +192,24 @@ std::pair<std::string, std::string> localImportDateTime() {
     return {date.str(), time.str()};
 }
 
+std::string apertureDisplay(sqlite3_stmt* statement, int column) {
+    if (sqlite3_column_type(statement, column) == SQLITE_NULL) return "n/a";
+    static constexpr std::array<double, 45> thirdStops{
+        0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2,1.4,1.6,1.8,2.0,2.2,2.5,2.8,
+        3.2,3.5,4.0,4.5,5.0,5.6,6.3,7.1,8.0,9.0,10.0,11.0,13.0,
+        14.0,16.0,18.0,20.0,22.0,25.0,29.0,32.0,36.0,40.0,45.0,
+        51.0,57.0,64.0,72.0,81.0,91.0};
+    const auto decoded = sqlite3_column_double(statement, column);
+    const auto nearest = std::min_element(thirdStops.begin(), thirdStops.end(),
+        [decoded](double left, double right) {
+            return std::abs(left - decoded) < std::abs(right - decoded);
+        });
+    std::ostringstream out;
+    if (std::floor(*nearest) == *nearest) out << static_cast<int>(*nearest);
+    else out << std::fixed << std::setprecision(1) << *nearest;
+    return out.str();
+}
+
 } // namespace
 
 SaveResult saveToDatabase(const std::filesystem::path& path,
@@ -351,8 +370,11 @@ std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
     Database db(path); db.exec(schema); migrate(db);
     sqlite3_stmt* statement = nullptr;
     constexpr auto sql = R"SQL(
-        SELECT id, frame_index, shutter_display, aperture_f, captured_at
-        FROM frames WHERE roll_id=? ORDER BY frame_index
+        SELECT f.id, f.frame_index, f.shutter_display, f.aperture_f,
+               CASE WHEN r.dx_iso IS NOT NULL THEN r.dx_iso ELSE f.manual_iso END,
+               f.focal_length_mm, f.captured_at
+        FROM frames f JOIN rolls r ON r.id=f.roll_id
+        WHERE f.roll_id=? ORDER BY f.frame_index
     )SQL";
     if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK)
         throw std::runtime_error(sqlite3_errmsg(db.get()));
@@ -367,8 +389,10 @@ std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
             return text ? reinterpret_cast<const char*>(text) : "n/a";
         };
         item.shutterSpeed = value(2);
-        item.aperture = value(3);
-        item.capturedAt = value(4);
+        item.aperture = apertureDisplay(statement, 3);
+        item.iso = value(4);
+        item.focalLength = value(5);
+        item.capturedAt = value(6);
         frames.push_back(std::move(item));
     }
     sqlite3_finalize(statement);
@@ -417,10 +441,10 @@ std::string describeFrame(const std::filesystem::path& path,
         << "Frame Index: " << field(8) << '\n'
         << "Frame Number: " << field(9) << '\n'
         << "Focal Length (mm): " << field(10) << '\n'
-        << "Maximum Aperture (f): " << field(11) << '\n'
+        << "Maximum Aperture (f): " << apertureDisplay(statement, 11) << '\n'
         << "Shutter Time (seconds): " << field(12) << '\n'
         << "Shutter Display: " << field(13) << '\n'
-        << "Aperture (f): " << field(14) << '\n'
+        << "Aperture (f): " << apertureDisplay(statement, 14) << '\n'
         << "Manual ISO: " << field(15) << '\n'
         << "Exposure Compensation (EV): " << field(16) << '\n'
         << "Flash Compensation (EV): " << field(17) << '\n'

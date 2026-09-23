@@ -28,6 +28,8 @@ struct FrameListItem {
     std::int64_t frameIndex{};
     std::string shutterSpeed;
     std::string aperture;
+    std::string iso;
+    std::string focalLength;
     std::string capturedAt;
 };
 

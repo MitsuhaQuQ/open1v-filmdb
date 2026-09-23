@@ -258,6 +258,8 @@ void viewDatabase(const std::filesystem::path& database) {
                     std::cout << i + 1 << ") Index: " << frame.frameIndex
                               << " | Shutter Speed: " << frame.shutterSpeed
                               << " | Aperture: " << frame.aperture
+                              << " | ISO: " << frame.iso
+                              << " | Focal Length (mm): " << frame.focalLength
                               << " | Shooting Date/Time: " << frame.capturedAt
                               << '\n';
                 }
