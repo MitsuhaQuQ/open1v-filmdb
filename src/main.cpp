@@ -123,18 +123,16 @@ std::unique_ptr<open1v::ITransport> makeTransport(const Options& options) {
     return std::make_unique<open1v::SerialTransport>(options.port);
 }
 
-void syncRecords(Options options) {
+void syncRecords(Options options, open1v::CameraProtocolSession& camera,
+                 bool keepSession) {
     if (options.output.empty()) {
         options.output = options.format == "sqlite"
             ? (executableDirectory() / "film-records.sqlite3").string()
             : "film-records." + options.format;
     }
-    auto transport = makeTransport(options);
-    open1v::BridgeClient bridge(*transport);
-    open1v::CameraProtocolSession camera(bridge);
     std::vector<open1v::CameraPacket> packets;
     try {
-        camera.beginSession();
+        if (!camera.sessionActive()) camera.beginSession();
         const auto status = camera.perform(open1v::CameraRead::filmStatus);
         const auto e1 = std::find_if(status.begin(), status.end(),
             [](const open1v::CameraPacket& packet) {
@@ -145,7 +143,7 @@ void syncRecords(Options options) {
         const auto rollCount = static_cast<unsigned>(e1->bytes[2]) << 8 |
                                static_cast<unsigned>(e1->bytes[3]);
         if (rollCount == 0) {
-            camera.endSession();
+            if (!keepSession) camera.endSession();
             std::cout << "Camera film-record storage is empty; nothing to sync.\n";
             return;
         }
@@ -153,9 +151,11 @@ void syncRecords(Options options) {
         std::cout << "Camera reports " << rollCount
                   << " roll(s). Downloading film records...\n";
         packets = camera.perform(open1v::CameraRead::filmRecords);
-        camera.endSession();
+        if (!keepSession) camera.endSession();
     } catch (...) {
-        try { if (camera.sessionActive()) camera.endSession(); } catch (...) {}
+        if (!keepSession) {
+            try { if (camera.sessionActive()) camera.endSession(); } catch (...) {}
+        }
         throw;
     }
     const auto download = filmrecorder::parsePackets(packets);
@@ -178,13 +178,30 @@ void syncRecords(Options options) {
     std::cout << std::filesystem::absolute(path).string() << '\n';
 }
 
-void clearRecords(const Options& options) {
-    auto transport = makeTransport(options);
+void syncRecords(Options options) {
+    auto transport=makeTransport(options);
     open1v::BridgeClient bridge(*transport);
     open1v::CameraProtocolSession camera(bridge);
+    syncRecords(std::move(options),camera,false);
+}
+
+void clearRecords(open1v::CameraProtocolSession& camera, bool keepSession) {
     std::cout << "Clearing all film records from EOS-1V...\n";
-    camera.clearFilmRecords();
+    try {
+        camera.clearFilmRecords();
+        if(!keepSession && camera.sessionActive())camera.endSession();
+    } catch(...) {
+        if(!keepSession){try{if(camera.sessionActive())camera.endSession();}catch(...) {}}
+        throw;
+    }
     std::cout << "Camera film-record storage is empty (verified by E1).\n";
+}
+
+void clearRecords(const Options& options) {
+    auto transport=makeTransport(options);
+    open1v::BridgeClient bridge(*transport);
+    open1v::CameraProtocolSession camera(bridge);
+    clearRecords(camera,false);
 }
 
 bool confirmClear() {
@@ -265,18 +282,18 @@ unsigned selectedShootingDataBytes(const std::array<std::uint8_t,8>& mask) {
     return total;
 }
 
-void setShootingData(const Options& options) {
+void setShootingData(open1v::CameraProtocolSession& camera) {
+    if(!camera.sessionActive())camera.beginSession();
+    const auto original=shootingMask(camera.perform(open1v::CameraRead::settings));
+    auto mask=original;
+    const auto& fields=shootingDataFields();
     for (;;) {
-        auto transport=makeTransport(options);
-        open1v::BridgeClient bridge(*transport);
-        open1v::CameraProtocolSession camera(bridge);
-        auto mask=shootingMask(camera.readOnce(open1v::CameraRead::settings));
-        const auto& fields=shootingDataFields();
         const auto usedBytes=selectedShootingDataBytes(mask);
         std::cout << "\nFilm shooting-data fields\n";
         for (std::size_t i=0;i<fields.size();++i) {
             const bool enabled=fieldEnabled(mask,fields[i]);
-            std::cout << i+1 << ") [" << (enabled?"ON ":"OFF")
+            const bool changed=enabled!=fieldEnabled(original,fields[i]);
+            std::cout << (changed?'*':' ') << i+1 << ") [" << (enabled?"ON ":"OFF")
                       << "] " << fields[i].name << " {" << fields[i].bytes
                       << (fields[i].bytes==1?" byte}":" bytes}");
             if (!enabled && usedBytes+fields[i].bytes>28)
@@ -286,26 +303,32 @@ void setShootingData(const Options& options) {
         std::cout << "Current usage: " << usedBytes
                   << "/28 bytes | Internal record length: "
                   << unsigned(open1v::shootingDataRecordWidth(mask)) << " bytes\n"
-                  << "q) Back\nset/field> " << std::flush;
+                  << "* marks staged changes\n"
+                  << "Enter 1..18 to toggle, commit, discard, or q\nset> " << std::flush;
         std::string input;
         if (!std::getline(std::cin,input)) return;
         input=normalized(input);
-        if (input=="q") return;
+        if (input=="q" || input=="discard") {
+            std::cout << "Shooting-data changes discarded.\n";
+            return;
+        }
+        if(input=="commit") {
+            if(mask==original) {
+                std::cout << "No shooting-data changes to commit.\n";
+                return;
+            }
+            std::cout << "Warning: changing recorded fields can split a partially shot film "
+                         "into a new logical roll segment.\n";
+            camera.setShootingDataMask(mask);
+            std::cout << "Shooting-data changes committed and verified.\n";
+            return;
+        }
         const auto selected=menuIndex(input,fields.size());
         if (!selected) { std::cout << "Invalid selection.\n"; continue; }
 
         const auto& field=fields[*selected];
         const bool current=fieldEnabled(mask,field);
-        std::cout << "\n" << field.name << " is currently "
-                  << (current?"ON":"OFF") << ".\n"
-                  << "1) ON\n2) OFF\nq) Cancel\nset/value> " << std::flush;
-        if (!std::getline(std::cin,input)) return;
-        input=normalized(input);
-        if (input=="q") continue;
-        const auto state=menuIndex(input,2);
-        if (!state) { std::cout << "Invalid selection.\n"; continue; }
-        const bool enabled=*state==0;
-        if (enabled==current) { std::cout << "Setting is already unchanged.\n"; continue; }
+        const bool enabled=!current;
         const auto currentBytes=selectedShootingDataBytes(mask);
         if (enabled && currentBytes+field.bytes>28) {
             std::cout << "Cannot enable " << field.name << ": it needs "
@@ -315,22 +338,17 @@ void setShootingData(const Options& options) {
                       << " available.\n";
             continue;
         }
-        for (std::size_t i=0;i<mask.size();++i) {
-            if(enabled)mask[i]|=field.bits[i];
-            else mask[i]&=static_cast<std::uint8_t>(~field.bits[i]);
+        auto staged=mask;
+        for (std::size_t i=0;i<staged.size();++i) {
+            if(enabled)staged[i]|=field.bits[i];
+            else staged[i]&=static_cast<std::uint8_t>(~field.bits[i]);
         }
-        std::cout << "Resulting internal record length: "
-                  << unsigned(open1v::shootingDataRecordWidth(mask))
-                  << " bytes\n";
-        std::cout << "Warning: changing recorded fields can split a partially shot film "
-                     "into a new logical roll segment.\nApply and verify this change? [y/n]: "
-                  << std::flush;
-        if (!std::getline(std::cin,input)) return;
-        input=normalized(input);
-        if (input!="y") { std::cout << "Setting change cancelled.\n"; continue; }
-        camera.setShootingDataMask(mask);
-        std::cout << "Verified: " << field.name << " is now "
-                  << (enabled?"ON":"OFF") << ".\n";
+        try {
+            (void)open1v::shootingDataRecordWidth(staged);
+            mask=staged;
+        } catch(const std::exception& ex) {
+            std::cout << "Cannot toggle " << field.name << ": " << ex.what() << ".\n";
+        }
     }
 }
 
@@ -482,29 +500,49 @@ void viewDatabase(const std::filesystem::path& database) {
 }
 
 void interactive(const Options& options) {
+    auto transport=makeTransport(options);
+    open1v::BridgeClient bridge(*transport);
+    open1v::CameraProtocolSession camera(bridge);
     std::cout << "EOS-1V Film Record interactive mode\n";
     for (;;) {
         std::cout << "\n"
                      "sync - Download camera film records to the local SQLite database\n"
                      "clear - Permanently delete all film records from the camera\n"
                      "set - Select which shooting-data fields the camera records\n"
+                     "stop - End the active camera session\n"
                      "view - Browse imported rolls by month and date\n"
                      "help - Show this command table again\n"
                      "exit - Close the program\n\n";
         std::cout << "film-record> " << std::flush;
         std::string command;
-        if (!std::getline(std::cin, command)) { std::cout << '\n'; return; }
+        if (!std::getline(std::cin, command)) {
+            std::cout << '\n';
+            try { if(camera.sessionActive())camera.endSession(); } catch(...) {}
+            return;
+        }
         command = normalized(command);
         if (command.empty()) continue;
-        if (command == "exit" || command == "quit") return;
+        if (command == "exit" || command == "quit") {
+            if(camera.sessionActive()) {
+                std::cout << "Camera session is active; enter stop before exit.\n";
+                continue;
+            }
+            return;
+        }
         if (command == "help") continue;
         try {
-            if (command == "sync") syncRecords(options);
-            else if (command == "set") setShootingData(options);
+            if (command == "sync") syncRecords(options,camera,true);
+            else if (command == "set") setShootingData(camera);
+            else if(command=="stop") {
+                if(camera.sessionActive()) {
+                    camera.endSession();
+                    std::cout << "Camera session ended.\n";
+                } else std::cout << "No active camera session.\n";
+            }
             else if (command == "view")
                 viewDatabase(executableDirectory() / "film-records.sqlite3");
             else if (command == "clear") {
-                if (confirmClear()) clearRecords(options);
+                if (confirmClear()) clearRecords(camera,true);
                 else std::cout << "Clear cancelled.\n";
             } else std::cout << "Unknown command. Enter help to list commands.\n";
         } catch (const std::exception& ex) {
