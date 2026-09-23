@@ -229,6 +229,56 @@ std::pair<std::string, std::string> localImportDateTime() {
     return {date.str(), time.str()};
 }
 
+struct ExistingRollMatch {
+    std::int64_t rollId{};
+    std::size_t frames{};
+};
+
+std::optional<ExistingRollMatch> findExistingRoll(
+    sqlite3* db, const FilmRoll& incoming) {
+    if (incoming.frames.empty()) return std::nullopt;
+    sqlite3_stmt* candidates=nullptr;
+    constexpr auto candidateSql=R"SQL(
+SELECT r.id,count(f.id)
+FROM rolls r JOIN frames f ON f.roll_id=r.id
+WHERE r.film_id=? AND r.record_width=?
+GROUP BY r.id
+HAVING count(f.id)>0 AND count(f.id)<=?
+ORDER BY count(f.id) DESC,r.id DESC
+)SQL";
+    if(sqlite3_prepare_v2(db,candidateSql,-1,&candidates,nullptr)!=SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db));
+    sqlite3_bind_text(candidates,1,incoming.filmId.c_str(),-1,SQLITE_TRANSIENT);
+    sqlite3_bind_int(candidates,2,incoming.recordWidth);
+    sqlite3_bind_int64(candidates,3,static_cast<sqlite3_int64>(incoming.frames.size()));
+    std::vector<ExistingRollMatch> possible;
+    while(sqlite3_step(candidates)==SQLITE_ROW)
+        possible.push_back({sqlite3_column_int64(candidates,0),
+                            static_cast<std::size_t>(sqlite3_column_int64(candidates,1))});
+    sqlite3_finalize(candidates);
+
+    constexpr auto frameSql=
+        "SELECT captured_at FROM frames WHERE roll_id=? ORDER BY frame_index";
+    for(const auto& candidate:possible) {
+        sqlite3_stmt* frames=nullptr;
+        if(sqlite3_prepare_v2(db,frameSql,-1,&frames,nullptr)!=SQLITE_OK)
+            throw std::runtime_error(sqlite3_errmsg(db));
+        sqlite3_bind_int64(frames,1,candidate.rollId);
+        bool equal=true;
+        std::size_t index=0;
+        while(sqlite3_step(frames)==SQLITE_ROW) {
+            if(index>=incoming.frames.size() || !incoming.frames[index].capturedAt ||
+               sqlite3_column_type(frames,0)==SQLITE_NULL) { equal=false; break; }
+            const auto stored=reinterpret_cast<const char*>(sqlite3_column_text(frames,0));
+            if(!stored || *incoming.frames[index].capturedAt!=stored) { equal=false; break; }
+            ++index;
+        }
+        sqlite3_finalize(frames);
+        if(equal && index==candidate.frames) return candidate;
+    }
+    return std::nullopt;
+}
+
 std::string apertureDisplay(sqlite3_stmt* statement, int column) {
     if (sqlite3_column_type(statement, column) == SQLITE_NULL) return "n/a";
     static constexpr std::array<double, 45> thirdStops{
@@ -300,11 +350,19 @@ SaveResult saveToDatabase(const std::filesystem::path& path,
         std::size_t frameTotal = 0;
         for (std::size_t r = 0; r < download.rolls.size(); ++r) {
             const auto& roll = download.rolls[r];
-            addRoll.integer(1, importId); addRoll.integer(2, r + 1); addRoll.text(3, roll.filmId);
-            addRoll.integer(4, roll.recordWidth); addRoll.optionalInteger(5, roll.dxIso);
-            addRoll.nullableText(6, roll.loadedAt); addRoll.text(7, roll.rawHeaderHex); addRoll.done();
-            const auto rollId = sqlite3_last_insert_rowid(db.get());
-            for (std::size_t f = 0; f < roll.frames.size(); ++f) {
+            const auto existing=findExistingRoll(db.get(),roll);
+            std::int64_t rollId{};
+            std::size_t firstNewFrame{};
+            if(existing) {
+                rollId=existing->rollId;
+                firstNewFrame=existing->frames;
+            } else {
+                addRoll.integer(1, importId); addRoll.integer(2, r + 1); addRoll.text(3, roll.filmId);
+                addRoll.integer(4, roll.recordWidth); addRoll.optionalInteger(5, roll.dxIso);
+                addRoll.nullableText(6, roll.loadedAt); addRoll.text(7, roll.rawHeaderHex); addRoll.done();
+                rollId=sqlite3_last_insert_rowid(db.get());
+            }
+            for (std::size_t f = firstNewFrame; f < roll.frames.size(); ++f) {
                 const auto& frame = roll.frames[f];
                 addFrame.integer(1, rollId); addFrame.integer(2, f + 1);
                 addFrame.integer(3,frame.number);

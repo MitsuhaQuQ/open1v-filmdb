@@ -534,10 +534,11 @@ void selfTest() {
     frame.shutterPresent = true; frame.shutterWire = 0x40; frame.shutterSeconds = 1.0 / 256;
     frame.shutterDisplay = "1/256 s"; frame.aperturePresent = true; frame.apertureWire = 0x18;
     frame.apertureF = 8.0; frame.shootingMode = "Aperture-priority AE"; frame.rawHex = "E4";
+    frame.capturedAt = "2026-09-22T12:00:01";
     frame.cfnValues = "0,1,0,3,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0";
     roll.frames.push_back(frame); auto& markedFrame = roll.frames.back();
     markedFrame.number = 2; markedFrame.aebPosition = "Underexposed";
-    markedFrame.multipleExposure = true;
+    markedFrame.multipleExposure = true; markedFrame.capturedAt = "2026-09-22T12:00:02";
     filmrecorder::saveToDatabase(testDb, fixture, "self-test");
     const auto report = filmrecorder::inspectDatabase(testDb);
     const auto plainDetail = filmrecorder::describeFrame(testDb, 1);
@@ -550,6 +551,18 @@ void selfTest() {
         markedDetail.find("AEB Position: Underexposed") == std::string::npos ||
         markedDetail.find("Multiple Exposure: Yes") == std::string::npos)
         throw std::runtime_error("database self-test verification failed");
+    auto appended=fixture;
+    appended.rolls[0].frames.push_back(markedFrame);
+    appended.rolls[0].frames.back().number=3;
+    appended.rolls[0].frames.back().capturedAt="2026-09-22T12:00:03";
+    const auto appendedResult=filmrecorder::saveToDatabase(testDb,appended,"self-test-append");
+    const auto appendedReport=filmrecorder::inspectDatabase(testDb);
+    if(appendedResult.rolls!=1 || appendedResult.frames!=1 ||
+       appendedReport.find("Imports: 2") == std::string::npos ||
+       appendedReport.find("Rolls: 1") == std::string::npos ||
+       appendedReport.find("Frames: 3") == std::string::npos ||
+       filmrecorder::listFramesForRoll(testDb,1).size()!=3)
+        throw std::runtime_error("same-roll append self-test failed");
     std::filesystem::remove(testDb, ignored);
     std::cout << "Self-test passed.\n";
 }
