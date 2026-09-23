@@ -241,7 +241,7 @@ std::optional<ExistingRollMatch> findExistingRoll(
     constexpr auto candidateSql=R"SQL(
 SELECT r.id,count(f.id)
 FROM rolls r JOIN frames f ON f.roll_id=r.id
-WHERE r.film_id=? AND r.record_width=?
+WHERE r.film_id=?
 GROUP BY r.id
 HAVING count(f.id)>0 AND count(f.id)<=?
 ORDER BY count(f.id) DESC,r.id DESC
@@ -249,8 +249,7 @@ ORDER BY count(f.id) DESC,r.id DESC
     if(sqlite3_prepare_v2(db,candidateSql,-1,&candidates,nullptr)!=SQLITE_OK)
         throw std::runtime_error(sqlite3_errmsg(db));
     sqlite3_bind_text(candidates,1,incoming.filmId.c_str(),-1,SQLITE_TRANSIENT);
-    sqlite3_bind_int(candidates,2,incoming.recordWidth);
-    sqlite3_bind_int64(candidates,3,static_cast<sqlite3_int64>(incoming.frames.size()));
+    sqlite3_bind_int64(candidates,2,static_cast<sqlite3_int64>(incoming.frames.size()));
     std::vector<ExistingRollMatch> possible;
     while(sqlite3_step(candidates)==SQLITE_ROW)
         possible.push_back({sqlite3_column_int64(candidates,0),

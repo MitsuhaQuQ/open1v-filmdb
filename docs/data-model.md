@@ -58,7 +58,8 @@ Each successful download is inserted in one transaction. A failure rolls back th
 The `view` command groups imports by `import_date`. Within a selected date it orders rolls by `import_time` and database Roll ID, so multiple imports made on the same day remain distinguishable.
 
 During a later sync, a downloaded roll is appended to an existing Roll ID when
-its Film ID and record width match and every existing frame's non-null shooting
-timestamp exactly matches the corresponding prefix timestamp in the download.
-This also applies when the existing roll contains only one frame. Only the new
-tail frames are inserted; a missing timestamp or any mismatch creates a new roll.
+its Film ID matches and every existing frame's non-null shooting timestamp
+exactly matches the corresponding prefix timestamp in the download. Record
+width may differ because the shooting-data selection can change. This also
+applies when the existing roll contains only one frame. Only the new tail frames
+are inserted; a missing timestamp or any mismatch creates a new roll.

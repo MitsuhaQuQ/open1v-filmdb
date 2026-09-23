@@ -552,6 +552,8 @@ void selfTest() {
         markedDetail.find("Multiple Exposure: Yes") == std::string::npos)
         throw std::runtime_error("database self-test verification failed");
     auto appended=fixture;
+    appended.rolls[0].recordWidth=16;
+    appended.rolls[0].fieldMaskHex="FF FF 00 00 00 00 00 00";
     appended.rolls[0].frames.push_back(markedFrame);
     appended.rolls[0].frames.back().number=3;
     appended.rolls[0].frames.back().capturedAt="2026-09-22T12:00:03";
