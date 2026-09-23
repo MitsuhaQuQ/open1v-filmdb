@@ -137,7 +137,8 @@ std::string metering(std::uint8_t wire) {
 std::string shooting(std::uint8_t wire) {
     switch (wire) {
     case 0x80:return "Manual"; case 0x10:return "Program AE"; case 0x20:return "Shutter-priority AE";
-    case 0x40:return "Aperture-priority AE"; case 0x04:return "Bulb"; default:return unknown(wire);
+    case 0x40:return "Aperture-priority AE"; case 0x08:return "Depth-of-field AE";
+    case 0x04:return "Bulb"; default:return unknown(wire);
     }
 }
 std::string advance(std::uint8_t wire) {
@@ -349,6 +350,15 @@ bool runSelfTest(std::string& error) {
             "0,1,0,3,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0" ||
             dynamic.rolls[0].frames[0].cfnAuxWire != 2)
             throw std::runtime_error("C.Fn snapshot did not match fixture");
+
+        auto depthE4 = dynamicE4;
+        depthE4[8] = 0x08;
+        const std::vector<open1v::CameraPacket> depthPackets{
+            {"FILM E1", e1}, {"FILM E3", dynamicE3}, {"FILM E4", depthE4},
+            {"FILM E4", {0xe4,1,0,0}}, {"FILM E3", {0xe3,1,0,0}}};
+        const auto depth = parsePackets(depthPackets);
+        if (depth.rolls[0].frames[0].shootingMode != "Depth-of-field AE")
+            throw std::runtime_error("depth-of-field AE shooting mode was not decoded");
         return true;
     } catch (const std::exception& ex) { error = ex.what(); return false; }
 }

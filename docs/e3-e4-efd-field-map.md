@@ -123,9 +123,8 @@ Additional low-bit flags are preserved.
 - `10` → Program AE
 - `20` → Shutter-priority AE
 - `40` → Aperture-priority AE
+- `08` → Depth-of-field AE
 - `04` → Bulb
-
-The E4 wire value for depth-of-field AE is not yet confirmed.
 
 ### Film advance
 
