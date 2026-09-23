@@ -247,13 +247,35 @@ void viewDatabase(const std::filesystem::path& database) {
             const auto selectedRoll = menuIndex(input, rolls.size());
             if (!selectedRoll) { std::cout << "Invalid selection.\n"; continue; }
 
-            std::cout << '\n' << filmrecorder::describeRoll(
-                database, rolls[*selectedRoll].rollId);
-            do {
-                std::cout << "q) Back\nview/detail> " << std::flush;
+            for (;;) {
+                const auto frames = filmrecorder::listFramesForRoll(
+                    database, rolls[*selectedRoll].rollId);
+                std::cout << "\nFrames for Roll ID "
+                          << rolls[*selectedRoll].rollId << "\n";
+                if (frames.empty()) std::cout << "  (no frames)\n";
+                for (std::size_t i = 0; i < frames.size(); ++i) {
+                    const auto& frame = frames[i];
+                    std::cout << i + 1 << ") Index: " << frame.frameIndex
+                              << " | Shutter Speed: " << frame.shutterSpeed
+                              << " | Aperture: " << frame.aperture
+                              << " | Shooting Date/Time: " << frame.capturedAt
+                              << '\n';
+                }
+                std::cout << "q) Back\nview/frame> " << std::flush;
                 if (!std::getline(std::cin, input)) return;
                 input = normalized(input);
-            } while (input != "q");
+                if (input == "q") break;
+                const auto selectedFrame = menuIndex(input, frames.size());
+                if (!selectedFrame) { std::cout << "Invalid selection.\n"; continue; }
+
+                std::cout << '\n' << filmrecorder::describeFrame(
+                    database, frames[*selectedFrame].frameId);
+                do {
+                    std::cout << "q) Back\nview/detail> " << std::flush;
+                    if (!std::getline(std::cin, input)) return;
+                    input = normalized(input);
+                } while (input != "q");
+            }
         }
     }
 }

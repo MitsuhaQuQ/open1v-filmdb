@@ -346,80 +346,94 @@ std::vector<RollListItem> listRollsForDate(const std::filesystem::path& path,
     return rolls;
 }
 
-std::string describeRoll(const std::filesystem::path& path,
-                         std::int64_t rollId) {
+std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
+                                             std::int64_t rollId) {
     Database db(path); db.exec(schema); migrate(db);
     sqlite3_stmt* statement = nullptr;
-    constexpr auto rollSql = R"SQL(
-        SELECT i.import_date, i.import_time, i.id, r.id, r.film_id,
-               r.record_width, r.dx_iso, r.loaded_at
-        FROM rolls r JOIN imports i ON i.id=r.import_id WHERE r.id=?
+    constexpr auto sql = R"SQL(
+        SELECT id, frame_index, shutter_display, aperture_f, captured_at
+        FROM frames WHERE roll_id=? ORDER BY frame_index
     )SQL";
-    if (sqlite3_prepare_v2(db.get(), rollSql, -1, &statement, nullptr) != SQLITE_OK)
+    if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK)
         throw std::runtime_error(sqlite3_errmsg(db.get()));
     sqlite3_bind_int64(statement, 1, rollId);
+    std::vector<FrameListItem> frames;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        FrameListItem item;
+        item.frameId = sqlite3_column_int64(statement, 0);
+        item.frameIndex = sqlite3_column_int64(statement, 1);
+        const auto value = [&](int column) -> std::string {
+            const auto text = sqlite3_column_text(statement, column);
+            return text ? reinterpret_cast<const char*>(text) : "n/a";
+        };
+        item.shutterSpeed = value(2);
+        item.aperture = value(3);
+        item.capturedAt = value(4);
+        frames.push_back(std::move(item));
+    }
+    sqlite3_finalize(statement);
+    return frames;
+}
+
+std::string describeFrame(const std::filesystem::path& path,
+                          std::int64_t frameId) {
+    Database db(path); db.exec(schema); migrate(db);
+    sqlite3_stmt* statement = nullptr;
+    constexpr auto sql = R"SQL(
+        SELECT i.import_date, i.import_time, i.id, r.id, r.film_id,
+               r.record_width, r.dx_iso, r.loaded_at,
+               f.frame_index, f.frame_number, f.focal_length_mm,
+               f.max_aperture_f, f.shutter_seconds, f.shutter_display,
+               f.aperture_f, f.manual_iso, f.exposure_compensation_ev,
+               f.flash_compensation_ev, f.flash_mode, f.metering_mode,
+               f.shooting_mode, f.film_advance, f.af_mode,
+               f.multiple_exposure, f.bulb_time_units, f.captured_at,
+               f.cfn_values, f.battery_loaded_at
+        FROM frames f
+        JOIN rolls r ON r.id=f.roll_id
+        JOIN imports i ON i.id=r.import_id
+        WHERE f.id=?
+    )SQL";
+    if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db.get()));
+    sqlite3_bind_int64(statement, 1, frameId);
     if (sqlite3_step(statement) != SQLITE_ROW) {
         sqlite3_finalize(statement);
-        throw std::runtime_error("roll ID was not found");
+        throw std::runtime_error("frame ID was not found");
     }
-    const auto text = [&](int column) -> std::string {
+    const auto field = [&](int column) -> std::string {
         const auto value = sqlite3_column_text(statement, column);
         return value ? reinterpret_cast<const char*>(value) : "n/a";
     };
     std::ostringstream out;
-    out << "Import Date: " << text(0)
-        << " | Import Time: " << text(1)
-        << " | Import ID: " << sqlite3_column_int64(statement, 2)
-        << " | Roll ID: " << sqlite3_column_int64(statement, 3)
-        << " | Film ID: " << text(4)
-        << " | Record Width: " << text(5)
-        << " | DX ISO: " << text(6)
-        << " | Loaded At: " << text(7) << "\n\nFrames:\n";
-    sqlite3_finalize(statement);
-
-    constexpr auto frameSql = R"SQL(
-        SELECT frame_index, frame_number, focal_length_mm, max_aperture_f,
-               shutter_seconds, shutter_display, aperture_f, manual_iso,
-               exposure_compensation_ev, flash_compensation_ev, flash_mode,
-               metering_mode, shooting_mode, film_advance, af_mode,
-               multiple_exposure, bulb_time_units, captured_at, cfn_values,
-               battery_loaded_at
-        FROM frames WHERE roll_id=? ORDER BY frame_index
-    )SQL";
-    if (sqlite3_prepare_v2(db.get(), frameSql, -1, &statement, nullptr) != SQLITE_OK)
-        throw std::runtime_error(sqlite3_errmsg(db.get()));
-    sqlite3_bind_int64(statement, 1, rollId);
-    bool found = false;
-    std::size_t recordNumber = 0;
-    while (sqlite3_step(statement) == SQLITE_ROW) {
-        found = true;
-        ++recordNumber;
-        const auto field = [&](int column) -> std::string {
-            const auto value = sqlite3_column_text(statement, column);
-            return value ? reinterpret_cast<const char*>(value) : "n/a";
-        };
-        out << recordNumber << ") Frame Index: " << field(0)
-            << " | Frame Number: " << field(1)
-            << " | Focal Length (mm): " << field(2)
-            << " | Maximum Aperture (f): " << field(3)
-            << " | Shutter Time (seconds): " << field(4)
-            << " | Shutter Display: " << field(5)
-            << " | Aperture (f): " << field(6)
-            << " | Manual ISO: " << field(7)
-            << " | Exposure Compensation (EV): " << field(8)
-            << " | Flash Compensation (EV): " << field(9)
-            << " | Flash Mode: " << field(10)
-            << " | Metering Mode: " << field(11)
-            << " | Shooting Mode: " << field(12)
-            << " | Film Advance: " << field(13)
-            << " | AF Mode: " << field(14)
-            << " | Multiple Exposure: " << field(15)
-            << " | Bulb Time Units: " << field(16)
-            << " | Captured At: " << field(17)
-            << " | C.Fn Values: " << field(18)
-            << " | Battery Loaded At: " << field(19) << "\n\n";
-    }
-    if (!found) out << "  n/a\n";
+    out << "Import Date: " << field(0)
+        << " | Import Time: " << field(1)
+        << " | Import ID: " << field(2)
+        << " | Roll ID: " << field(3)
+        << " | Film ID: " << field(4)
+        << " | Record Width: " << field(5)
+        << " | DX ISO: " << field(6)
+        << " | Loaded At: " << field(7)
+        << " | Frame Index: " << field(8)
+        << " | Frame Number: " << field(9)
+        << " | Focal Length (mm): " << field(10)
+        << " | Maximum Aperture (f): " << field(11)
+        << " | Shutter Time (seconds): " << field(12)
+        << " | Shutter Display: " << field(13)
+        << " | Aperture (f): " << field(14)
+        << " | Manual ISO: " << field(15)
+        << " | Exposure Compensation (EV): " << field(16)
+        << " | Flash Compensation (EV): " << field(17)
+        << " | Flash Mode: " << field(18)
+        << " | Metering Mode: " << field(19)
+        << " | Shooting Mode: " << field(20)
+        << " | Film Advance: " << field(21)
+        << " | AF Mode: " << field(22)
+        << " | Multiple Exposure: " << field(23)
+        << " | Bulb Time Units: " << field(24)
+        << " | Captured At: " << field(25)
+        << " | C.Fn Values: " << field(26)
+        << " | Battery Loaded At: " << field(27) << "\n\n";
     sqlite3_finalize(statement);
     return out.str();
 }

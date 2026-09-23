@@ -23,6 +23,14 @@ struct RollListItem {
     std::int64_t frameCount{};
 };
 
+struct FrameListItem {
+    std::int64_t frameId{};
+    std::int64_t frameIndex{};
+    std::string shutterSpeed;
+    std::string aperture;
+    std::string capturedAt;
+};
+
 SaveResult saveToDatabase(const std::filesystem::path& path,
                           const Download& download,
                           const char* sourceType);
@@ -31,7 +39,9 @@ std::vector<std::string> listImportDates(const std::filesystem::path& path,
                                          const std::string& yearMonth);
 std::vector<RollListItem> listRollsForDate(const std::filesystem::path& path,
                                            const std::string& date);
-std::string describeRoll(const std::filesystem::path& path,
-                         std::int64_t rollId);
+std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
+                                             std::int64_t rollId);
+std::string describeFrame(const std::filesystem::path& path,
+                          std::int64_t frameId);
 
 } // namespace filmrecorder
