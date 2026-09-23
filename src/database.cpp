@@ -364,21 +364,26 @@ std::string describeRoll(const std::filesystem::path& path,
     }
     const auto text = [&](int column) -> std::string {
         const auto value = sqlite3_column_text(statement, column);
-        return value ? reinterpret_cast<const char*>(value) : "-";
+        return value ? reinterpret_cast<const char*>(value) : "No Data";
     };
     std::ostringstream out;
-    out << "Import: " << text(0) << ' ' << text(1)
-        << " (ID " << sqlite3_column_int64(statement, 2) << ")\n"
-        << "Roll ID: " << sqlite3_column_int64(statement, 3) << '\n'
-        << "Film ID: " << text(4) << '\n'
-        << "Record width: " << sqlite3_column_int(statement, 5) << '\n'
-        << "DX ISO: " << text(6) << '\n'
-        << "Loaded at: " << text(7) << "\n\nFrames:\n";
+    out << "Import Date: " << text(0)
+        << " | Import Time: " << text(1)
+        << " | Import ID: " << sqlite3_column_int64(statement, 2)
+        << " | Roll ID: " << sqlite3_column_int64(statement, 3)
+        << " | Film ID: " << text(4)
+        << " | Record Width: " << text(5)
+        << " | DX ISO: " << text(6)
+        << " | Loaded At: " << text(7) << "\n\nFrames:\n";
     sqlite3_finalize(statement);
 
     constexpr auto frameSql = R"SQL(
-        SELECT frame_number, captured_at, shutter_display, aperture_f,
-               focal_length_mm, shooting_mode
+        SELECT frame_index, frame_number, focal_length_mm, max_aperture_f,
+               shutter_seconds, shutter_display, aperture_f, manual_iso,
+               exposure_compensation_ev, flash_compensation_ev, flash_mode,
+               metering_mode, shooting_mode, film_advance, af_mode,
+               multiple_exposure, bulb_time_units, captured_at, cfn_values,
+               battery_loaded_at
         FROM frames WHERE roll_id=? ORDER BY frame_index
     )SQL";
     if (sqlite3_prepare_v2(db.get(), frameSql, -1, &statement, nullptr) != SQLITE_OK)
@@ -389,13 +394,30 @@ std::string describeRoll(const std::filesystem::path& path,
         found = true;
         const auto field = [&](int column) -> std::string {
             const auto value = sqlite3_column_text(statement, column);
-            return value ? reinterpret_cast<const char*>(value) : "-";
+            return value ? reinterpret_cast<const char*>(value) : "No Data";
         };
-        out << "  #" << field(0) << " | " << field(1)
-            << " | " << field(2) << " | f/" << field(3)
-            << " | " << field(4) << " mm | " << field(5) << '\n';
+        out << "  Frame Index: " << field(0)
+            << " | Frame Number: " << field(1)
+            << " | Focal Length (mm): " << field(2)
+            << " | Maximum Aperture (f): " << field(3)
+            << " | Shutter Time (seconds): " << field(4)
+            << " | Shutter Display: " << field(5)
+            << " | Aperture (f): " << field(6)
+            << " | Manual ISO: " << field(7)
+            << " | Exposure Compensation (EV): " << field(8)
+            << " | Flash Compensation (EV): " << field(9)
+            << " | Flash Mode: " << field(10)
+            << " | Metering Mode: " << field(11)
+            << " | Shooting Mode: " << field(12)
+            << " | Film Advance: " << field(13)
+            << " | AF Mode: " << field(14)
+            << " | Multiple Exposure: " << field(15)
+            << " | Bulb Time Units: " << field(16)
+            << " | Captured At: " << field(17)
+            << " | C.Fn Values: " << field(18)
+            << " | Battery Loaded At: " << field(19) << '\n';
     }
-    if (!found) out << "  (no frames)\n";
+    if (!found) out << "  No Data\n";
     sqlite3_finalize(statement);
     return out.str();
 }

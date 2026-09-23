@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <conio.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <io.h>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -170,6 +172,28 @@ std::optional<std::size_t> menuIndex(const std::string& input,
     return value - 1;
 }
 
+std::string readMenuInput(bool immediateMonthKeys = false) {
+    if (immediateMonthKeys && _isatty(_fileno(stdin))) {
+        const int key = _getch();
+        if (key == 'p' || key == 'P' || key == 'n' || key == 'N' ||
+            key == 'q' || key == 'Q') {
+            std::cout << static_cast<char>(key) << '\n';
+            return normalized(std::string(1, static_cast<char>(key)));
+        }
+        if (key >= '0' && key <= '9') {
+            std::cout << static_cast<char>(key) << std::flush;
+            std::string remainder;
+            if (!std::getline(std::cin, remainder)) return {};
+            return normalized(std::string(1, static_cast<char>(key)) + remainder);
+        }
+        std::cout << '\n';
+        return {};
+    }
+    std::string input;
+    if (!std::getline(std::cin, input)) return {};
+    return normalized(input);
+}
+
 std::string yearMonth(int year, int month) {
     std::ostringstream out;
     out << year << '-' << (month < 10 ? "0" : "") << month;
@@ -197,9 +221,8 @@ void viewDatabase(const std::filesystem::path& database) {
             std::cout << i + 1 << ") " << dates[i] << '\n';
         std::cout << "p) Previous month  n) Next month  q) Back\nview/date> " << std::flush;
 
-        std::string input;
-        if (!std::getline(std::cin, input)) return;
-        input = normalized(input);
+        std::string input = readMenuInput(true);
+        if (!std::cin) return;
         if (input == "q") return;
         if (input == "p") { moveMonth(year, month, -1); continue; }
         if (input == "n") { moveMonth(year, month, 1); continue; }
