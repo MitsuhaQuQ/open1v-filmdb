@@ -390,13 +390,15 @@ std::string describeRoll(const std::filesystem::path& path,
         throw std::runtime_error(sqlite3_errmsg(db.get()));
     sqlite3_bind_int64(statement, 1, rollId);
     bool found = false;
+    std::size_t recordNumber = 0;
     while (sqlite3_step(statement) == SQLITE_ROW) {
         found = true;
+        ++recordNumber;
         const auto field = [&](int column) -> std::string {
             const auto value = sqlite3_column_text(statement, column);
             return value ? reinterpret_cast<const char*>(value) : "No Data";
         };
-        out << "  Frame Index: " << field(0)
+        out << recordNumber << ") Frame Index: " << field(0)
             << " | Frame Number: " << field(1)
             << " | Focal Length (mm): " << field(2)
             << " | Maximum Aperture (f): " << field(3)
@@ -415,7 +417,7 @@ std::string describeRoll(const std::filesystem::path& path,
             << " | Bulb Time Units: " << field(16)
             << " | Captured At: " << field(17)
             << " | C.Fn Values: " << field(18)
-            << " | Battery Loaded At: " << field(19) << '\n';
+            << " | Battery Loaded At: " << field(19) << "\n\n";
     }
     if (!found) out << "  No Data\n";
     sqlite3_finalize(statement);

@@ -259,21 +259,21 @@ void viewDatabase(const std::filesystem::path& database) {
 }
 
 void interactive(const Options& options) {
-    std::cout << "EOS-1V Film Record interactive mode\nCommands: sync, clear, view, help, exit\n";
+    std::cout << "EOS-1V Film Record interactive mode\n";
     for (;;) {
+        std::cout << "\n"
+                     "sync - Download camera film records to the local SQLite database\n"
+                     "clear - Permanently delete all film records from the camera\n"
+                     "view - Browse imported rolls by month and date\n"
+                     "help - Show this command table again\n"
+                     "exit - Close the program\n\n";
         std::cout << "film-record> " << std::flush;
         std::string command;
         if (!std::getline(std::cin, command)) { std::cout << '\n'; return; }
         command = normalized(command);
         if (command.empty()) continue;
         if (command == "exit" || command == "quit") return;
-        if (command == "help") {
-            std::cout << "  sync   Download camera film records to the local SQLite database\n"
-                         "  clear  Permanently delete all film records from the camera\n"
-                         "  view   Browse imported rolls by month and date\n"
-                         "  exit   Close the program\n";
-            continue;
-        }
+        if (command == "help") continue;
         try {
             if (command == "sync") syncRecords(options);
             else if (command == "view")

@@ -76,6 +76,8 @@ Interactive mode accepts these commands:
 - `help` shows the command list.
 - `exit` closes the program.
 
+The full `command - description` table is printed whenever control returns to the main menu. In roll details, every frame record has its own number and a blank line after it for readability.
+
 The clear operation sends the verified, parameterless E2 command exactly once, keeps the same PC session open, and polls E1 until it reports zero rolls before refreshing FC. If the acknowledgement or verification is uncertain, the application reports an error and does not automatically retry the destructive command.
 
 The camera must be in PC mode before each new connection. A completed download exits PC mode normally.
