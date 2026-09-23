@@ -364,7 +364,7 @@ std::string describeRoll(const std::filesystem::path& path,
     }
     const auto text = [&](int column) -> std::string {
         const auto value = sqlite3_column_text(statement, column);
-        return value ? reinterpret_cast<const char*>(value) : "No Data";
+        return value ? reinterpret_cast<const char*>(value) : "n/a";
     };
     std::ostringstream out;
     out << "Import Date: " << text(0)
@@ -396,7 +396,7 @@ std::string describeRoll(const std::filesystem::path& path,
         ++recordNumber;
         const auto field = [&](int column) -> std::string {
             const auto value = sqlite3_column_text(statement, column);
-            return value ? reinterpret_cast<const char*>(value) : "No Data";
+            return value ? reinterpret_cast<const char*>(value) : "n/a";
         };
         out << recordNumber << ") Frame Index: " << field(0)
             << " | Frame Number: " << field(1)
@@ -419,7 +419,7 @@ std::string describeRoll(const std::filesystem::path& path,
             << " | C.Fn Values: " << field(18)
             << " | Battery Loaded At: " << field(19) << "\n\n";
     }
-    if (!found) out << "  No Data\n";
+    if (!found) out << "  n/a\n";
     sqlite3_finalize(statement);
     return out.str();
 }
