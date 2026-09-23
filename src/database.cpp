@@ -1,6 +1,10 @@
 #include "filmrecorder/database.hpp"
 
+#if defined(_WIN32)
 #include <winsqlite/winsqlite3.h>
+#else
+#include <sqlite3.h>
+#endif
 
 #include <array>
 #include <chrono>
@@ -212,7 +216,11 @@ std::pair<std::string, std::string> localImportDateTime() {
     const auto now = std::chrono::system_clock::now();
     const auto value = std::chrono::system_clock::to_time_t(now);
     std::tm local{};
+#if defined(_WIN32)
     if (localtime_s(&local, &value) != 0)
+#else
+    if (localtime_r(&value, &local) == nullptr)
+#endif
         throw std::runtime_error("cannot read local system time");
     std::ostringstream date;
     std::ostringstream time;

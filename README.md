@@ -1,11 +1,14 @@
 # EOS-1V Film Database
 
-A Windows command-line application for downloading, decoding, and storing Canon EOS-1V film shooting records.
+A Windows, macOS, and Linux command-line application for downloading, decoding,
+and storing Canon EOS-1V film shooting records.
 
 ## Features
 
 - Downloads all film-record segments through an UNO R4 or compatible bridge
-- Reuses the tested serial, WinUSB, bridge, and camera-session layers from `open1V-cli`
+- Reuses the tested serial, bridge, and camera-session layers from `open1V-cli`
+- Uses the native COM API on Windows and a shared POSIX termios/poll serial layer
+  on macOS and Linux; WinUSB remains available on Windows
 - Stores decoded records in a local SQLite database
 - Preserves one complete raw E3 packet per roll and one complete raw E4 packet per frame
 - Decodes fields according to each roll's dynamic shooting-field mask
@@ -16,20 +19,22 @@ A Windows command-line application for downloading, decoding, and storing Canon 
 
 The connection library is included as a Git submodule:
 
-```powershell
+```sh
 git clone --recurse-submodules https://github.com/MitsuhaQuQ/open1v-filmdb.git
 cd open1v-filmdb
 ```
 
 If the repository was cloned without submodules:
 
-```powershell
+```sh
 git submodule update --init --recursive
 ```
 
 ## Build
 
-Visual Studio with the Desktop development with C++ workload is required.
+### Windows
+
+Visual Studio with the Desktop development with C++ workload is required:
 
 ```powershell
 .\build.cmd
@@ -37,7 +42,23 @@ Visual Studio with the Desktop development with C++ workload is required.
 
 The Release executable is written to `x64\Release\film-record.exe`.
 
+### macOS and Linux
+
+A C++20 compiler, CMake 3.20 or newer, and SQLite 3 development files are
+required. macOS provides SQLite through the SDK. On Linux, install the SQLite
+development package supplied by the distribution, then run:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The executable is written to `build/film-record`.
+
 ## Usage
+
+### Windows examples
 
 ```powershell
 # Start interactive mode with automatic bridge detection
@@ -68,6 +89,32 @@ The Release executable is written to `x64\Release\film-record.exe`.
 .\x64\Release\film-record.exe view
 ```
 
+### macOS and Linux examples
+
+```sh
+# Start interactive mode with automatic UNO R4 detection
+./build/film-record
+
+# Use a specific macOS serial device
+./build/film-record sync --port /dev/cu.usbmodem1101
+
+# Use a specific Linux serial device
+./build/film-record sync --port /dev/ttyACM0
+
+# Offline parser and database tests
+./build/film-record self-test
+
+# Export CSV
+./build/film-record sync --format csv --output ./exports/film-records.csv
+
+# Inspect or browse the default database
+./build/film-record inspect
+./build/film-record view
+```
+
+Automatic serial discovery recognizes the supported UNO R4 and experimental
+Minima ES-E1-ID USB identities. The `--winusb` option is Windows-only.
+
 Interactive mode accepts these commands:
 
 - `sync` first checks the camera's E1 roll count. If it is zero, the command returns without creating an empty import; otherwise it downloads and decodes all film records into the local SQLite database.
@@ -84,7 +131,9 @@ The camera must be in PC mode before each new connection. A completed download e
 
 ## SQLite storage
 
-The default database is `film-records.sqlite3` beside `film-record.exe`, independent of the process working directory. Repeated downloads create new import batches and do not overwrite earlier records. Use `--output` to select another path.
+The default database is `film-records.sqlite3` beside the executable, independent
+of the process working directory. Repeated downloads create new import batches
+and do not overwrite earlier records. Use `--output` to select another path.
 
 The database contains three main tables:
 

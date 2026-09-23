@@ -7,17 +7,31 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
-#include <conio.h>
+#include <chrono>
+#include <cstdio>
+#include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <io.h>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#if defined(_WIN32)
+#include <conio.h>
+#include <io.h>
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <termios.h>
+#include <unistd.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 namespace {
 struct Options {
@@ -28,6 +42,7 @@ struct Options {
 };
 
 std::filesystem::path executableDirectory() {
+#if defined(_WIN32)
     std::wstring buffer(260, L'\0');
     while (true) {
         const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
@@ -39,14 +54,35 @@ std::filesystem::path executableDirectory() {
         if (buffer.size() >= 32768) throw std::runtime_error("executable path is too long");
         buffer.resize(buffer.size() * 2);
     }
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0)
+        throw std::runtime_error("cannot determine executable path");
+    return std::filesystem::weakly_canonical(buffer).parent_path();
+#elif defined(__linux__)
+    std::string buffer(256, '\0');
+    for (;;) {
+        const auto length = readlink("/proc/self/exe", buffer.data(), buffer.size());
+        if (length < 0) throw std::runtime_error("cannot determine executable path");
+        if (static_cast<std::size_t>(length) < buffer.size()) {
+            buffer.resize(static_cast<std::size_t>(length));
+            return std::filesystem::path(buffer).parent_path();
+        }
+        buffer.resize(buffer.size() * 2);
+    }
+#else
+    return std::filesystem::current_path();
+#endif
 }
 
 void usage() {
     std::cout << "EOS-1V Film Record downloader\n\n"
                  "Usage:\n"
-                 "  film-record [--port COM3 | --winusb]\n"
-                 "  film-record sync [--port COM3 | --winusb] [--format sqlite|json|csv] [--output FILE]\n"
-                 "  film-record clear [--port COM3 | --winusb]\n"
+                 "  film-record [--port PATH | --winusb]\n"
+                 "  film-record sync [--port PATH | --winusb] [--format sqlite|json|csv] [--output FILE]\n"
+                 "  film-record clear [--port PATH | --winusb]\n"
                  "  film-record view [--database FILE]\n"
                  "  film-record inspect [--database FILE]\n"
                  "  film-record self-test\n\n"
@@ -83,7 +119,7 @@ Options parseOptions(int argc, char** argv, int first, bool allowOutput) {
 
 std::unique_ptr<open1v::ITransport> makeTransport(const Options& options) {
     if (options.winusb) return std::make_unique<open1v::WinUsbTransport>();
-    return std::make_unique<open1v::SerialTransport>(std::wstring(options.port.begin(), options.port.end()));
+    return std::make_unique<open1v::SerialTransport>(options.port);
 }
 
 void syncRecords(Options options) {
@@ -173,6 +209,7 @@ std::optional<std::size_t> menuIndex(const std::string& input,
 }
 
 std::string readMenuInput(bool immediateMonthKeys = false) {
+#if defined(_WIN32)
     if (immediateMonthKeys && _isatty(_fileno(stdin))) {
         const int key = _getch();
         if (key == 'p' || key == 'P' || key == 'n' || key == 'N' ||
@@ -189,6 +226,33 @@ std::string readMenuInput(bool immediateMonthKeys = false) {
         std::cout << '\n';
         return {};
     }
+#else
+    if (immediateMonthKeys && isatty(fileno(stdin))) {
+        termios saved{};
+        if (tcgetattr(fileno(stdin), &saved) == 0) {
+            termios immediate = saved;
+            immediate.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+            if (tcsetattr(fileno(stdin), TCSANOW, &immediate) == 0) {
+                const int key = std::getchar();
+                tcsetattr(fileno(stdin), TCSANOW, &saved);
+                if (key == EOF) return {};
+                if (key == 'p' || key == 'P' || key == 'n' || key == 'N' ||
+                    key == 'q' || key == 'Q') {
+                    std::cout << static_cast<char>(key) << '\n';
+                    return normalized(std::string(1, static_cast<char>(key)));
+                }
+                if (key >= '0' && key <= '9') {
+                    std::cout << static_cast<char>(key) << std::flush;
+                    std::string remainder;
+                    if (!std::getline(std::cin, remainder)) return {};
+                    return normalized(std::string(1, static_cast<char>(key)) + remainder);
+                }
+                std::cout << '\n';
+                return {};
+            }
+        }
+    }
+#endif
     std::string input;
     if (!std::getline(std::cin, input)) return {};
     return normalized(input);
@@ -207,10 +271,19 @@ void moveMonth(int& year, int& month, int offset) {
 }
 
 void viewDatabase(const std::filesystem::path& database) {
+#if defined(_WIN32)
     SYSTEMTIME local{};
     GetLocalTime(&local);
     int year = local.wYear;
     int month = local.wMonth;
+#else
+    const auto now = std::time(nullptr);
+    std::tm local{};
+    if (localtime_r(&now, &local) == nullptr)
+        throw std::runtime_error("cannot read local system time");
+    int year = local.tm_year + 1900;
+    int month = local.tm_mon + 1;
+#endif
 
     for (;;) {
         const auto monthText = yearMonth(year, month);

@@ -22,6 +22,7 @@ temp/
 
 # Build and test output
 build/
+cmake-build-*/
 dist/
 coverage/
 .cache/
