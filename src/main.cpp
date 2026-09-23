@@ -6,10 +6,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <windows.h>
@@ -42,6 +45,7 @@ void usage() {
                  "  film-record [--port COM3 | --winusb]\n"
                  "  film-record sync [--port COM3 | --winusb] [--format sqlite|json|csv] [--output FILE]\n"
                  "  film-record clear [--port COM3 | --winusb]\n"
+                 "  film-record view [--database FILE]\n"
                  "  film-record inspect [--database FILE]\n"
                  "  film-record self-test\n\n"
                  "Running without a command starts interactive mode.\n";
@@ -156,8 +160,83 @@ bool confirmClear() {
     }
 }
 
+std::optional<std::size_t> menuIndex(const std::string& input,
+                                     std::size_t count) {
+    if (input.empty()) return std::nullopt;
+    std::size_t value = 0;
+    const auto result = std::from_chars(input.data(), input.data() + input.size(), value);
+    if (result.ec != std::errc{} || result.ptr != input.data() + input.size() ||
+        value == 0 || value > count) return std::nullopt;
+    return value - 1;
+}
+
+std::string yearMonth(int year, int month) {
+    std::ostringstream out;
+    out << year << '-' << (month < 10 ? "0" : "") << month;
+    return out.str();
+}
+
+void moveMonth(int& year, int& month, int offset) {
+    month += offset;
+    if (month < 1) { month = 12; --year; }
+    if (month > 12) { month = 1; ++year; }
+}
+
+void viewDatabase(const std::filesystem::path& database) {
+    SYSTEMTIME local{};
+    GetLocalTime(&local);
+    int year = local.wYear;
+    int month = local.wMonth;
+
+    for (;;) {
+        const auto monthText = yearMonth(year, month);
+        const auto dates = filmrecorder::listImportDates(database, monthText);
+        std::cout << "\nImport dates for " << monthText << "\n";
+        if (dates.empty()) std::cout << "  (no imports)\n";
+        for (std::size_t i = 0; i < dates.size(); ++i)
+            std::cout << i + 1 << ") " << dates[i] << '\n';
+        std::cout << "p) Previous month  n) Next month  q) Back\nview/date> " << std::flush;
+
+        std::string input;
+        if (!std::getline(std::cin, input)) return;
+        input = normalized(input);
+        if (input == "q") return;
+        if (input == "p") { moveMonth(year, month, -1); continue; }
+        if (input == "n") { moveMonth(year, month, 1); continue; }
+        const auto selectedDate = menuIndex(input, dates.size());
+        if (!selectedDate) { std::cout << "Invalid selection.\n"; continue; }
+
+        for (;;) {
+            const auto rolls = filmrecorder::listRollsForDate(database, dates[*selectedDate]);
+            std::cout << "\nRolls imported on " << dates[*selectedDate] << "\n";
+            if (rolls.empty()) std::cout << "  (no rolls)\n";
+            for (std::size_t i = 0; i < rolls.size(); ++i) {
+                const auto& roll = rolls[i];
+                std::cout << i + 1 << ") " << roll.importTime
+                          << " | Roll ID " << roll.rollId
+                          << " | Film " << roll.filmId
+                          << " | " << roll.frameCount << " frame(s)\n";
+            }
+            std::cout << "q) Back\nview/roll> " << std::flush;
+            if (!std::getline(std::cin, input)) return;
+            input = normalized(input);
+            if (input == "q") break;
+            const auto selectedRoll = menuIndex(input, rolls.size());
+            if (!selectedRoll) { std::cout << "Invalid selection.\n"; continue; }
+
+            std::cout << '\n' << filmrecorder::describeRoll(
+                database, rolls[*selectedRoll].rollId);
+            do {
+                std::cout << "q) Back\nview/detail> " << std::flush;
+                if (!std::getline(std::cin, input)) return;
+                input = normalized(input);
+            } while (input != "q");
+        }
+    }
+}
+
 void interactive(const Options& options) {
-    std::cout << "EOS-1V Film Record interactive mode\nCommands: sync, clear, help, exit\n";
+    std::cout << "EOS-1V Film Record interactive mode\nCommands: sync, clear, view, help, exit\n";
     for (;;) {
         std::cout << "film-record> " << std::flush;
         std::string command;
@@ -168,11 +247,14 @@ void interactive(const Options& options) {
         if (command == "help") {
             std::cout << "  sync   Download camera film records to the local SQLite database\n"
                          "  clear  Permanently delete all film records from the camera\n"
+                         "  view   Browse imported rolls by month and date\n"
                          "  exit   Close the program\n";
             continue;
         }
         try {
             if (command == "sync") syncRecords(options);
+            else if (command == "view")
+                viewDatabase(executableDirectory() / "film-records.sqlite3");
             else if (command == "clear") {
                 if (confirmClear()) clearRecords(options);
                 else std::cout << "Clear cancelled.\n";
@@ -221,6 +303,13 @@ int main(int argc, char** argv) {
             else if (argc != 2) throw std::runtime_error("inspect accepts only --database FILE");
             std::cout << "Database: " << std::filesystem::absolute(database).string() << '\n'
                       << filmrecorder::inspectDatabase(database);
+            return 0;
+        }
+        if (argc >= 2 && std::string(argv[1]) == "view") {
+            std::filesystem::path database = executableDirectory() / "film-records.sqlite3";
+            if (argc == 4 && std::string(argv[2]) == "--database") database = argv[3];
+            else if (argc != 2) throw std::runtime_error("view accepts only --database FILE");
+            viewDatabase(database);
             return 0;
         }
         if (argc >= 2 && (std::string(argv[1]) == "sync" || std::string(argv[1]) == "download")) {

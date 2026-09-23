@@ -293,4 +293,111 @@ std::string inspectDatabase(const std::filesystem::path& path) {
     return out.str();
 }
 
+std::vector<std::string> listImportDates(const std::filesystem::path& path,
+                                         const std::string& yearMonth) {
+    Database db(path); db.exec(schema); migrate(db);
+    sqlite3_stmt* statement = nullptr;
+    constexpr auto sql = R"SQL(
+        SELECT DISTINCT import_date FROM imports
+        WHERE substr(import_date,1,7)=?
+        ORDER BY import_date
+    )SQL";
+    if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db.get()));
+    sqlite3_bind_text(statement, 1, yearMonth.c_str(), -1, SQLITE_TRANSIENT);
+    std::vector<std::string> dates;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        const auto value = sqlite3_column_text(statement, 0);
+        if (value) dates.emplace_back(reinterpret_cast<const char*>(value));
+    }
+    sqlite3_finalize(statement);
+    return dates;
+}
+
+std::vector<RollListItem> listRollsForDate(const std::filesystem::path& path,
+                                           const std::string& date) {
+    Database db(path); db.exec(schema); migrate(db);
+    sqlite3_stmt* statement = nullptr;
+    constexpr auto sql = R"SQL(
+        SELECT r.id, i.id, i.import_time, r.film_id, count(f.id)
+        FROM imports i
+        JOIN rolls r ON r.import_id=i.id
+        LEFT JOIN frames f ON f.roll_id=r.id
+        WHERE i.import_date=?
+        GROUP BY r.id, i.id, i.import_time, r.film_id
+        ORDER BY i.import_time, r.id
+    )SQL";
+    if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db.get()));
+    sqlite3_bind_text(statement, 1, date.c_str(), -1, SQLITE_TRANSIENT);
+    std::vector<RollListItem> rolls;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        RollListItem item;
+        item.rollId = sqlite3_column_int64(statement, 0);
+        item.importId = sqlite3_column_int64(statement, 1);
+        if (const auto value = sqlite3_column_text(statement, 2))
+            item.importTime = reinterpret_cast<const char*>(value);
+        if (const auto value = sqlite3_column_text(statement, 3))
+            item.filmId = reinterpret_cast<const char*>(value);
+        item.frameCount = sqlite3_column_int64(statement, 4);
+        rolls.push_back(std::move(item));
+    }
+    sqlite3_finalize(statement);
+    return rolls;
+}
+
+std::string describeRoll(const std::filesystem::path& path,
+                         std::int64_t rollId) {
+    Database db(path); db.exec(schema); migrate(db);
+    sqlite3_stmt* statement = nullptr;
+    constexpr auto rollSql = R"SQL(
+        SELECT i.import_date, i.import_time, i.id, r.id, r.film_id,
+               r.record_width, r.dx_iso, r.loaded_at
+        FROM rolls r JOIN imports i ON i.id=r.import_id WHERE r.id=?
+    )SQL";
+    if (sqlite3_prepare_v2(db.get(), rollSql, -1, &statement, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db.get()));
+    sqlite3_bind_int64(statement, 1, rollId);
+    if (sqlite3_step(statement) != SQLITE_ROW) {
+        sqlite3_finalize(statement);
+        throw std::runtime_error("roll ID was not found");
+    }
+    const auto text = [&](int column) -> std::string {
+        const auto value = sqlite3_column_text(statement, column);
+        return value ? reinterpret_cast<const char*>(value) : "-";
+    };
+    std::ostringstream out;
+    out << "Import: " << text(0) << ' ' << text(1)
+        << " (ID " << sqlite3_column_int64(statement, 2) << ")\n"
+        << "Roll ID: " << sqlite3_column_int64(statement, 3) << '\n'
+        << "Film ID: " << text(4) << '\n'
+        << "Record width: " << sqlite3_column_int(statement, 5) << '\n'
+        << "DX ISO: " << text(6) << '\n'
+        << "Loaded at: " << text(7) << "\n\nFrames:\n";
+    sqlite3_finalize(statement);
+
+    constexpr auto frameSql = R"SQL(
+        SELECT frame_number, captured_at, shutter_display, aperture_f,
+               focal_length_mm, shooting_mode
+        FROM frames WHERE roll_id=? ORDER BY frame_index
+    )SQL";
+    if (sqlite3_prepare_v2(db.get(), frameSql, -1, &statement, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db.get()));
+    sqlite3_bind_int64(statement, 1, rollId);
+    bool found = false;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        found = true;
+        const auto field = [&](int column) -> std::string {
+            const auto value = sqlite3_column_text(statement, column);
+            return value ? reinterpret_cast<const char*>(value) : "-";
+        };
+        out << "  #" << field(0) << " | " << field(1)
+            << " | " << field(2) << " | f/" << field(3)
+            << " | " << field(4) << " mm | " << field(5) << '\n';
+    }
+    if (!found) out << "  (no frames)\n";
+    sqlite3_finalize(statement);
+    return out.str();
+}
+
 } // namespace filmrecorder

@@ -54,3 +54,5 @@ Raw transport values are stored only as `raw_e3` and `raw_e4`. The schema delibe
 ## Import behavior
 
 Each successful download is inserted in one transaction. A failure rolls back the entire new import. Existing imports are never overwritten.
+
+The `view` command groups imports by `import_date`. Within a selected date it orders rolls by `import_time` and database Roll ID, so multiple imports made on the same day remain distinguishable.

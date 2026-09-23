@@ -63,12 +63,16 @@ The Release executable is written to `x64\Release\film-record.exe`.
 
 # Inspect the default database
 .\x64\Release\film-record.exe inspect
+
+# Browse the default database interactively
+.\x64\Release\film-record.exe view
 ```
 
 Interactive mode accepts these commands:
 
 - `sync` first checks the camera's E1 roll count. If it is zero, the command returns without creating an empty import; otherwise it downloads and decodes all film records into the local SQLite database.
 - `clear` permanently deletes all film records stored by the camera. It requires an explicit `y`; entering `n` returns to the prompt without changing the camera.
+- `view` opens the database browser at the current month. Dates and rolls use numbered menus; `p` and `n` change month, and `q` returns to the preceding menu.
 - `help` shows the command list.
 - `exit` closes the program.
 
