@@ -183,15 +183,24 @@ std::optional<std::string> dateTimeParts(const std::uint8_t* date,
 Download parsePackets(const std::vector<open1v::CameraPacket>& packets) {
     Download result;
     FilmRoll* current = nullptr;
+    bool sawE1 = false;
+    bool sawAllEnd = false;
     for (const auto& item : packets) {
         const auto& packet = item.bytes;
         if (packet.empty()) continue;
         if (packet[0] == 0xe1 && packet.size() == 5) {
+            sawE1 = true;
             result.reportedRolls = static_cast<std::uint16_t>(
                 static_cast<std::uint16_t>(packet[2]) << 8 | packet[3]);
         } else if (packet[0] == 0xe3) {
-            if (isEnd(packet, 0xe3)) { current = nullptr; continue; }
+            if (isEnd(packet, 0xe3)) {
+                current = nullptr;
+                sawAllEnd = true;
+                continue;
+            }
             if (packet.size() != 36) throw std::runtime_error("invalid E3 packet length");
+            if (result.rolls.size() >= 100)
+                throw std::runtime_error("film download exceeded the safety roll limit");
             FilmRoll roll;
             roll.filmId = filmId(packet);
             roll.recordWidth = packet[2 + 8];
@@ -250,8 +259,9 @@ Download parsePackets(const std::vector<open1v::CameraPacket>& packets) {
             current->frames.push_back(std::move(frame));
         }
     }
-    if (result.rolls.size() != result.reportedRolls)
-        throw std::runtime_error("parsed roll count does not match E1");
+    if (!sawE1) throw std::runtime_error("film download did not include E1 status");
+    if (result.reportedRolls != 0 && !sawAllEnd)
+        throw std::runtime_error("film download did not include the E3 all-end packet");
     for (auto& roll : result.rolls) {
         for (std::size_t begin = 0; begin < roll.frames.size();) {
             std::size_t end = begin + 1;
@@ -359,6 +369,14 @@ bool runSelfTest(std::string& error) {
             parsed.rolls[0].frames[0].focalLengthMm != 105 ||
             parsed.rolls[0].frames[0].capturedAt != "2026-09-22T12:34:56")
             throw std::runtime_error("parsed values did not match fixture");
+
+        const std::vector<open1v::CameraPacket> changedCountPackets{
+            {"FILM E1", e1}, {"FILM E3", e3},
+            {"FILM E4", {0xe4,1,0,0}}, {"FILM E3", e3},
+            {"FILM E4", {0xe4,1,0,0}}, {"FILM E3", {0xe3,1,0,0}}};
+        const auto changedCount = parsePackets(changedCountPackets);
+        if (changedCount.reportedRolls != 1 || changedCount.rolls.size() != 2)
+            throw std::runtime_error("E1 snapshot incorrectly limited E3 roll parsing");
 
         std::vector<std::uint8_t> dynamicE3(36); dynamicE3[0] = 0xe3; dynamicE3[1] = 33;
         dynamicE3[10] = 0x20;
