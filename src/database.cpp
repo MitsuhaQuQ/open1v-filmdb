@@ -210,6 +210,42 @@ std::string apertureDisplay(sqlite3_stmt* statement, int column) {
     return out.str();
 }
 
+std::string shutterDisplay(sqlite3_stmt* statement, int secondsColumn,
+                           int fallbackColumn) {
+    if (sqlite3_column_type(statement, secondsColumn) == SQLITE_NULL) {
+        const auto fallback = sqlite3_column_text(statement, fallbackColumn);
+        return fallback ? reinterpret_cast<const char*>(fallback) : "n/a";
+    }
+    const auto seconds = sqlite3_column_double(statement, secondsColumn);
+    if (seconds <= 0) return "n/a";
+
+    if (seconds >= 0.3) {
+        static constexpr std::array<double, 21> longStops{
+            0.3,0.4,0.5,0.6,0.8,1.0,1.3,1.6,2.0,2.5,3.2,
+            4.0,5.0,6.0,8.0,10.0,13.0,15.0,20.0,25.0,30.0};
+        const auto nearest = std::min_element(longStops.begin(), longStops.end(),
+            [seconds](double left, double right) {
+                return std::abs(left - seconds) < std::abs(right - seconds);
+            });
+        std::ostringstream out;
+        if (std::floor(*nearest) == *nearest) out << static_cast<int>(*nearest);
+        else out << std::fixed << std::setprecision(1) << *nearest;
+        out << " s";
+        return out.str();
+    }
+
+    static constexpr std::array<int, 34> denominators{
+        4,5,6,8,10,13,15,20,25,30,40,50,60,80,100,125,160,
+        200,250,320,400,500,640,800,1000,1250,1600,2000,2500,
+        3200,4000,5000,6400,8000};
+    const auto reciprocal = 1.0 / seconds;
+    const auto nearest = std::min_element(denominators.begin(), denominators.end(),
+        [reciprocal](int left, int right) {
+            return std::abs(left - reciprocal) < std::abs(right - reciprocal);
+        });
+    return "1/" + std::to_string(*nearest) + " s";
+}
+
 } // namespace
 
 SaveResult saveToDatabase(const std::filesystem::path& path,
@@ -370,7 +406,7 @@ std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
     Database db(path); db.exec(schema); migrate(db);
     sqlite3_stmt* statement = nullptr;
     constexpr auto sql = R"SQL(
-        SELECT f.id, f.frame_index, f.shutter_display, f.aperture_f,
+        SELECT f.id, f.frame_index, f.shutter_seconds, f.shutter_display, f.aperture_f,
                CASE WHEN r.dx_iso IS NOT NULL THEN r.dx_iso ELSE f.manual_iso END,
                f.focal_length_mm, f.captured_at
         FROM frames f JOIN rolls r ON r.id=f.roll_id
@@ -388,11 +424,11 @@ std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
             const auto text = sqlite3_column_text(statement, column);
             return text ? reinterpret_cast<const char*>(text) : "n/a";
         };
-        item.shutterSpeed = value(2);
-        item.aperture = apertureDisplay(statement, 3);
-        item.iso = value(4);
-        item.focalLength = value(5);
-        item.capturedAt = value(6);
+        item.shutterSpeed = shutterDisplay(statement, 2, 3);
+        item.aperture = apertureDisplay(statement, 4);
+        item.iso = value(5);
+        item.focalLength = value(6);
+        item.capturedAt = value(7);
         frames.push_back(std::move(item));
     }
     sqlite3_finalize(statement);
@@ -442,8 +478,7 @@ std::string describeFrame(const std::filesystem::path& path,
         << "Frame Number: " << field(9) << '\n'
         << "Focal Length (mm): " << field(10) << '\n'
         << "Maximum Aperture (f): " << apertureDisplay(statement, 11) << '\n'
-        << "Shutter Time (seconds): " << field(12) << '\n'
-        << "Shutter Display: " << field(13) << '\n'
+        << "Shutter Speed: " << shutterDisplay(statement, 12, 13) << '\n'
         << "Aperture (f): " << apertureDisplay(statement, 14) << '\n'
         << "Manual ISO: " << field(15) << '\n'
         << "Exposure Compensation (EV): " << field(16) << '\n'
