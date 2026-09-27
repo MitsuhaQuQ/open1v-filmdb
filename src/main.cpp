@@ -3,6 +3,7 @@
 #include "filmrecorder/film_records.hpp"
 #include "open1v/bridge_client.hpp"
 #include "open1v/serial_transport.hpp"
+#include "open1v/shared_transport.hpp"
 #include "open1v/winusb_transport.hpp"
 
 #include <algorithm>
@@ -120,8 +121,13 @@ Options parseOptions(int argc, char** argv, int first, bool allowOutput) {
 }
 
 std::unique_ptr<open1v::ITransport> makeTransport(const Options& options) {
-    if (options.winusb) return std::make_unique<open1v::WinUsbTransport>();
-    return std::make_unique<open1v::SerialTransport>(options.port);
+    const auto key = options.winusb ? std::string("winusb")
+        : std::string("serial:") + (options.port.empty() ? "auto" : options.port);
+    return std::make_unique<open1v::SharedTransport>(key,
+        [options]() -> std::unique_ptr<open1v::ITransport> {
+            if (options.winusb) return std::make_unique<open1v::WinUsbTransport>();
+            return std::make_unique<open1v::SerialTransport>(options.port);
+        });
 }
 
 void syncRecords(Options options, open1v::CameraProtocolSession& camera,

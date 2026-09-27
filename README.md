@@ -9,6 +9,11 @@ and storing Canon EOS-1V film shooting records.
 - Reuses the tested serial, bridge, and camera-session layers from `open1V-cli`
 - Uses the native COM API on Windows and a shared POSIX termios/poll serial layer
   on macOS and Linux; WinUSB remains available on Windows
+- Shares one physical bridge and camera session with a concurrently running
+  `open1V` CLI on macOS and Linux. Commands from both programs execute FIFO,
+  later clients inherit PC mode, and F2 is deferred until the last session user
+  exits. Both programs must use automatic discovery or the same `--port` path.
+  Windows remains single-program exclusive for now.
 - Stores decoded records in a local SQLite database
 - Preserves one complete raw E3 packet per roll and one complete raw E4 packet per frame
 - Decodes fields according to each roll's dynamic shooting-field mask
