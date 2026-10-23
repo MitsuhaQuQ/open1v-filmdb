@@ -278,60 +278,6 @@ ORDER BY count(f.id) DESC,r.id DESC
     return std::nullopt;
 }
 
-std::string apertureDisplay(sqlite3_stmt* statement, int column) {
-    if (sqlite3_column_type(statement, column) == SQLITE_NULL) return "n/a";
-    static constexpr std::array<double, 45> thirdStops{
-        0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2,1.4,1.6,1.8,2.0,2.2,2.5,2.8,
-        3.2,3.5,4.0,4.5,5.0,5.6,6.3,7.1,8.0,9.0,10.0,11.0,13.0,
-        14.0,16.0,18.0,20.0,22.0,25.0,29.0,32.0,36.0,40.0,45.0,
-        51.0,57.0,64.0,72.0,81.0,91.0};
-    const auto decoded = sqlite3_column_double(statement, column);
-    const auto nearest = std::min_element(thirdStops.begin(), thirdStops.end(),
-        [decoded](double left, double right) {
-            return std::abs(left - decoded) < std::abs(right - decoded);
-        });
-    std::ostringstream out;
-    if (std::floor(*nearest) == *nearest) out << static_cast<int>(*nearest);
-    else out << std::fixed << std::setprecision(1) << *nearest;
-    return out.str();
-}
-
-std::string shutterDisplay(sqlite3_stmt* statement, int secondsColumn,
-                           int fallbackColumn) {
-    if (sqlite3_column_type(statement, secondsColumn) == SQLITE_NULL) {
-        const auto fallback = sqlite3_column_text(statement, fallbackColumn);
-        return fallback ? reinterpret_cast<const char*>(fallback) : "n/a";
-    }
-    const auto seconds = sqlite3_column_double(statement, secondsColumn);
-    if (seconds <= 0) return "n/a";
-
-    if (seconds >= 0.3) {
-        static constexpr std::array<double, 21> longStops{
-            0.3,0.4,0.5,0.6,0.8,1.0,1.3,1.6,2.0,2.5,3.2,
-            4.0,5.0,6.0,8.0,10.0,13.0,15.0,20.0,25.0,30.0};
-        const auto nearest = std::min_element(longStops.begin(), longStops.end(),
-            [seconds](double left, double right) {
-                return std::abs(left - seconds) < std::abs(right - seconds);
-            });
-        std::ostringstream out;
-        if (std::floor(*nearest) == *nearest) out << static_cast<int>(*nearest);
-        else out << std::fixed << std::setprecision(1) << *nearest;
-        out << " s";
-        return out.str();
-    }
-
-    static constexpr std::array<int, 34> denominators{
-        4,5,6,8,10,13,15,20,25,30,40,50,60,80,100,125,160,
-        200,250,320,400,500,640,800,1000,1250,1600,2000,2500,
-        3200,4000,5000,6400,8000};
-    const auto reciprocal = 1.0 / seconds;
-    const auto nearest = std::min_element(denominators.begin(), denominators.end(),
-        [reciprocal](int left, int right) {
-            return std::abs(left - reciprocal) < std::abs(right - reciprocal);
-        });
-    return "1/" + std::to_string(*nearest) + " s";
-}
-
 } // namespace
 
 SaveResult saveToDatabase(const std::filesystem::path& path,
@@ -387,7 +333,7 @@ SaveResult saveToDatabase(const std::filesystem::path& path,
     } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} throw; }
 }
 
-std::string inspectDatabase(const std::filesystem::path& path) {
+DatabaseStats inspectDatabase(const std::filesystem::path& path) {
     Database db(path);
     db.exec(schema);
     migrate(db);
@@ -431,16 +377,8 @@ std::string inspectDatabase(const std::filesystem::path& path) {
           (SELECT count(*) FROM pragma_table_info('rolls')
            WHERE name IN ('film_id_raw','field_mask_raw','dx_iso_wire'))
     )SQL");
-    std::ostringstream out;
-    out << "Integrity: " << integrity << '\n'
-        << "Imports: " << imports << '\n'
-        << "Rolls: " << rolls << '\n'
-        << "Frames: " << frames << '\n'
-        << "Invalid import date/time rows: " << invalidImportDateTime << '\n'
-        << "Frames with C.Fn: " << cfnRows << '\n'
-        << "Invalid C.Fn rows: " << invalidCfn << '\n'
-        << "Split raw columns: " << splitRawColumns << '\n';
-    return out.str();
+    return DatabaseStats{integrity, imports, rolls, frames, invalidImportDateTime,
+                         cfnRows, invalidCfn, splitRawColumns};
 }
 
 std::vector<std::string> listImportDates(const std::filesystem::path& path,
@@ -515,23 +453,26 @@ std::vector<FrameListItem> listFramesForRoll(const std::filesystem::path& path,
         FrameListItem item;
         item.frameId = sqlite3_column_int64(statement, 0);
         item.frameIndex = sqlite3_column_int64(statement, 1);
-        const auto value = [&](int column) -> std::string {
-            const auto text = sqlite3_column_text(statement, column);
-            return text ? reinterpret_cast<const char*>(text) : "n/a";
-        };
-        item.shutterSpeed = shutterDisplay(statement, 2, 3);
-        item.aperture = apertureDisplay(statement, 4);
-        item.iso = value(5);
-        item.focalLength = value(6);
-        item.capturedAt = value(7);
+        if (sqlite3_column_type(statement, 2) != SQLITE_NULL)
+            item.shutterSeconds = sqlite3_column_double(statement, 2);
+        if (const auto text = sqlite3_column_text(statement, 3))
+            item.shutterDisplay = reinterpret_cast<const char*>(text);
+        if (sqlite3_column_type(statement, 4) != SQLITE_NULL)
+            item.apertureF = sqlite3_column_double(statement, 4);
+        if (sqlite3_column_type(statement, 5) != SQLITE_NULL)
+            item.isoValue = sqlite3_column_int64(statement, 5);
+        if (sqlite3_column_type(statement, 6) != SQLITE_NULL)
+            item.focalLengthMm = sqlite3_column_int64(statement, 6);
+        if (const auto text = sqlite3_column_text(statement, 7))
+            item.capturedAt = reinterpret_cast<const char*>(text);
         frames.push_back(std::move(item));
     }
     sqlite3_finalize(statement);
     return frames;
 }
 
-std::string describeFrame(const std::filesystem::path& path,
-                          std::int64_t frameId) {
+FrameDetail loadFrameDetail(const std::filesystem::path& path,
+                            std::int64_t frameId) {
     Database db(path); db.exec(schema); migrate(db);
     sqlite3_stmt* statement = nullptr;
     constexpr auto sql = R"SQL(
@@ -556,43 +497,51 @@ std::string describeFrame(const std::filesystem::path& path,
         sqlite3_finalize(statement);
         throw std::runtime_error("frame ID was not found");
     }
-    const auto field = [&](int column) -> std::string {
+    const auto text = [&](int column) -> std::optional<std::string> {
         const auto value = sqlite3_column_text(statement, column);
-        return value ? reinterpret_cast<const char*>(value) : "n/a";
+        if (!value) return std::nullopt;
+        return std::string(reinterpret_cast<const char*>(value));
     };
-    std::ostringstream out;
-    out << "Import Date: " << field(0) << '\n'
-        << "Import Time: " << field(1) << '\n'
-        << "Import ID: " << field(2) << '\n'
-        << "Roll ID: " << field(3) << '\n'
-        << "Film ID: " << field(4) << '\n'
-        << "Record Width: " << field(5) << '\n'
-        << "DX ISO: " << field(6) << '\n'
-        << "Loaded At: " << field(7) << '\n'
-        << "Frame Index: " << field(8) << '\n'
-        << "Frame Number: " << field(9) << '\n'
-        << "Focal Length (mm): " << field(10) << '\n'
-        << "Maximum Aperture (f): " << apertureDisplay(statement, 11) << '\n'
-        << "Shutter Speed: " << shutterDisplay(statement, 12, 13) << '\n'
-        << "Aperture (f): " << apertureDisplay(statement, 14) << '\n'
-        << "Manual ISO: " << field(15) << '\n'
-        << "Exposure Compensation (EV): " << field(16) << '\n'
-        << "Flash Compensation (EV): " << field(17) << '\n'
-        << "Flash Mode: " << field(18) << '\n'
-        << "Metering Mode: " << field(19) << '\n'
-        << "Shooting Mode: " << field(20) << '\n';
-    if (sqlite3_column_type(statement, 21) != SQLITE_NULL)
-        out << "AEB Position: " << field(21) << '\n';
-    out << "Film Advance: " << field(22) << '\n'
-        << "AF Mode: " << field(23) << '\n';
-    if (sqlite3_column_int(statement, 24) != 0)
-        out << "Multiple Exposure: Yes\n";
-    out << "Bulb Time Units: " << field(25) << '\n'
-        << "Captured At: " << field(26) << '\n'
-        << "C.Fn Values: " << field(27) << '\n'
-        << "Battery Loaded At: " << field(28) << "\n\n";
+    const auto integer = [&](int column) -> std::optional<std::int64_t> {
+        if (sqlite3_column_type(statement, column) == SQLITE_NULL) return std::nullopt;
+        return sqlite3_column_int64(statement, column);
+    };
+    const auto real = [&](int column) -> std::optional<double> {
+        if (sqlite3_column_type(statement, column) == SQLITE_NULL) return std::nullopt;
+        return sqlite3_column_double(statement, column);
+    };
+    FrameDetail detail;
+    detail.importDate = text(0).value_or("");
+    detail.importTime = text(1).value_or("");
+    detail.importId = sqlite3_column_int64(statement, 2);
+    detail.rollId = sqlite3_column_int64(statement, 3);
+    detail.filmId = text(4);
+    detail.recordWidth = sqlite3_column_int64(statement, 5);
+    detail.dxIso = integer(6);
+    detail.loadedAt = text(7);
+    detail.frameIndex = sqlite3_column_int64(statement, 8);
+    detail.frameNumber = sqlite3_column_int64(statement, 9);
+    detail.focalLengthMm = integer(10);
+    detail.maxApertureF = real(11);
+    detail.shutterSeconds = real(12);
+    detail.shutterDisplay = text(13);
+    detail.apertureF = real(14);
+    detail.manualIso = integer(15);
+    detail.exposureCompensationEv = real(16);
+    detail.flashCompensationEv = real(17);
+    detail.flashMode = text(18);
+    detail.meteringMode = text(19);
+    detail.shootingMode = text(20);
+    detail.aebPosition = text(21);
+    detail.filmAdvance = text(22);
+    detail.afMode = text(23);
+    detail.multipleExposure = sqlite3_column_int(statement, 24) != 0;
+    detail.bulbTimeUnits = integer(25);
+    detail.capturedAt = text(26);
+    detail.cfnValues = text(27);
+    detail.batteryLoadedAt = text(28);
     sqlite3_finalize(statement);
-    return out.str();
+    return detail;
 }
 
 } // namespace filmrecorder

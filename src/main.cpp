@@ -11,11 +11,13 @@
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -325,6 +327,122 @@ void moveMonth(int& year, int& month, int offset) {
     if (month > 12) { month = 1; ++year; }
 }
 
+// Rendering helpers. The database layer returns recorded values; turning them
+// into the camera's familiar shutter/aperture wording happens here, so a GUI
+// can present the same numbers its own way.
+std::string realText(double value) {
+    char buffer[40]{};
+    std::snprintf(buffer, sizeof(buffer), "%.15g", value);
+    std::string text = buffer;
+    if (text.find_first_of(".eE") == std::string::npos) text += ".0";
+    return text;
+}
+
+std::string formatAperture(const std::optional<double>& value) {
+    if (!value) return "n/a";
+    static constexpr std::array<double, 45> thirdStops{
+        0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2,1.4,1.6,1.8,2.0,2.2,2.5,2.8,
+        3.2,3.5,4.0,4.5,5.0,5.6,6.3,7.1,8.0,9.0,10.0,11.0,13.0,
+        14.0,16.0,18.0,20.0,22.0,25.0,29.0,32.0,36.0,40.0,45.0,
+        51.0,57.0,64.0,72.0,81.0,91.0};
+    const auto nearest = std::min_element(thirdStops.begin(), thirdStops.end(),
+        [&](double left, double right) {
+            return std::abs(left - *value) < std::abs(right - *value);
+        });
+    std::ostringstream out;
+    if (std::floor(*nearest) == *nearest) out << static_cast<int>(*nearest);
+    else out << std::fixed << std::setprecision(1) << *nearest;
+    return out.str();
+}
+
+std::string formatShutter(const std::optional<double>& seconds,
+                          const std::optional<std::string>& fallback) {
+    if (!seconds) return fallback.value_or("n/a");
+    if (*seconds <= 0) return "n/a";
+    if (*seconds >= 0.3) {
+        static constexpr std::array<double, 21> longStops{
+            0.3,0.4,0.5,0.6,0.8,1.0,1.3,1.6,2.0,2.5,3.2,
+            4.0,5.0,6.0,8.0,10.0,13.0,15.0,20.0,25.0,30.0};
+        const auto nearest = std::min_element(longStops.begin(), longStops.end(),
+            [&](double left, double right) {
+                return std::abs(left - *seconds) < std::abs(right - *seconds);
+            });
+        std::ostringstream out;
+        if (std::floor(*nearest) == *nearest) out << static_cast<int>(*nearest);
+        else out << std::fixed << std::setprecision(1) << *nearest;
+        out << " s";
+        return out.str();
+    }
+    static constexpr std::array<int, 34> denominators{
+        4,5,6,8,10,13,15,20,25,30,40,50,60,80,100,125,160,
+        200,250,320,400,500,640,800,1000,1250,1600,2000,2500,
+        3200,4000,5000,6400,8000};
+    const auto reciprocal = 1.0 / *seconds;
+    const auto nearest = std::min_element(denominators.begin(), denominators.end(),
+        [reciprocal](int left, int right) {
+            return std::abs(left - reciprocal) < std::abs(right - reciprocal);
+        });
+    return "1/" + std::to_string(*nearest) + " s";
+}
+
+std::string optionalText(const std::optional<std::string>& value) {
+    return value.value_or("n/a");
+}
+
+std::string optionalInteger(const std::optional<std::int64_t>& value) {
+    return value ? std::to_string(*value) : std::string("n/a");
+}
+
+std::string describeFrameDetail(const filmrecorder::FrameDetail& detail) {
+    std::ostringstream out;
+    out << "Import Date: " << detail.importDate << '\n'
+        << "Import Time: " << detail.importTime << '\n'
+        << "Import ID: " << detail.importId << '\n'
+        << "Roll ID: " << detail.rollId << '\n'
+        << "Film ID: " << optionalText(detail.filmId) << '\n'
+        << "Record Width: " << detail.recordWidth << '\n'
+        << "DX ISO: " << optionalInteger(detail.dxIso) << '\n'
+        << "Loaded At: " << optionalText(detail.loadedAt) << '\n'
+        << "Frame Index: " << detail.frameIndex << '\n'
+        << "Frame Number: " << detail.frameNumber << '\n'
+        << "Focal Length (mm): " << optionalInteger(detail.focalLengthMm) << '\n'
+        << "Maximum Aperture (f): " << formatAperture(detail.maxApertureF) << '\n'
+        << "Shutter Speed: " << formatShutter(detail.shutterSeconds, detail.shutterDisplay) << '\n'
+        << "Aperture (f): " << formatAperture(detail.apertureF) << '\n'
+        << "Manual ISO: " << optionalInteger(detail.manualIso) << '\n'
+        << "Exposure Compensation (EV): "
+        << (detail.exposureCompensationEv ? realText(*detail.exposureCompensationEv) : "n/a") << '\n'
+        << "Flash Compensation (EV): "
+        << (detail.flashCompensationEv ? realText(*detail.flashCompensationEv) : "n/a") << '\n'
+        << "Flash Mode: " << optionalText(detail.flashMode) << '\n'
+        << "Metering Mode: " << optionalText(detail.meteringMode) << '\n'
+        << "Shooting Mode: " << optionalText(detail.shootingMode) << '\n';
+    if (detail.aebPosition)
+        out << "AEB Position: " << *detail.aebPosition << '\n';
+    out << "Film Advance: " << optionalText(detail.filmAdvance) << '\n'
+        << "AF Mode: " << optionalText(detail.afMode) << '\n';
+    if (detail.multipleExposure)
+        out << "Multiple Exposure: Yes\n";
+    out << "Bulb Time Units: " << optionalInteger(detail.bulbTimeUnits) << '\n'
+        << "Captured At: " << optionalText(detail.capturedAt) << '\n'
+        << "C.Fn Values: " << optionalText(detail.cfnValues) << '\n'
+        << "Battery Loaded At: " << optionalText(detail.batteryLoadedAt) << "\n\n";
+    return out.str();
+}
+
+std::string databaseReport(const filmrecorder::DatabaseStats& stats) {
+    std::ostringstream out;
+    out << "Integrity: " << stats.integrity << '\n'
+        << "Imports: " << stats.imports << '\n'
+        << "Rolls: " << stats.rolls << '\n'
+        << "Frames: " << stats.frames << '\n'
+        << "Invalid import date/time rows: " << stats.invalidImportDateTime << '\n'
+        << "Frames with C.Fn: " << stats.framesWithCfn << '\n'
+        << "Invalid C.Fn rows: " << stats.invalidCfn << '\n'
+        << "Split raw columns: " << stats.splitRawColumns << '\n';
+    return out.str();
+}
+
 void viewDatabase(const std::filesystem::path& database) {
 #if defined(_WIN32)
     SYSTEMTIME local{};
@@ -384,11 +502,11 @@ void viewDatabase(const std::filesystem::path& database) {
                 for (std::size_t i = 0; i < frames.size(); ++i) {
                     const auto& frame = frames[i];
                     std::cout << i + 1 << ") Index: " << frame.frameIndex
-                              << " | Shutter Speed: " << frame.shutterSpeed
-                              << " | Aperture: " << frame.aperture
-                              << " | ISO: " << frame.iso
-                              << " | Focal Length (mm): " << frame.focalLength
-                              << " | Shooting Date/Time: " << frame.capturedAt
+                              << " | Shutter Speed: " << formatShutter(frame.shutterSeconds, frame.shutterDisplay)
+                              << " | Aperture: " << formatAperture(frame.apertureF)
+                              << " | ISO: " << optionalInteger(frame.isoValue)
+                              << " | Focal Length (mm): " << optionalInteger(frame.focalLengthMm)
+                              << " | Shooting Date/Time: " << optionalText(frame.capturedAt)
                               << '\n';
                 }
                 std::cout << "q) Back\nview/frame> " << std::flush;
@@ -398,8 +516,8 @@ void viewDatabase(const std::filesystem::path& database) {
                 const auto selectedFrame = menuIndex(input, frames.size());
                 if (!selectedFrame) { std::cout << "Invalid selection.\n"; continue; }
 
-                std::cout << '\n' << filmrecorder::describeFrame(
-                    database, frames[*selectedFrame].frameId);
+                std::cout << '\n' << describeFrameDetail(
+                    filmrecorder::loadFrameDetail(database, frames[*selectedFrame].frameId));
                 do {
                     std::cout << "q) Back\nview/detail> " << std::flush;
                     if (!std::getline(std::cin, input)) return;
@@ -496,9 +614,9 @@ void selfTest() {
     markedFrame.number = 2; markedFrame.aebPosition = "Underexposed";
     markedFrame.multipleExposure = true; markedFrame.capturedAt = "2026-09-22T12:00:02";
     filmrecorder::saveToDatabase(testDb, fixture, "self-test");
-    const auto report = filmrecorder::inspectDatabase(testDb);
-    const auto plainDetail = filmrecorder::describeFrame(testDb, 1);
-    const auto markedDetail = filmrecorder::describeFrame(testDb, 2);
+    const auto report = databaseReport(filmrecorder::inspectDatabase(testDb));
+    const auto plainDetail = describeFrameDetail(filmrecorder::loadFrameDetail(testDb, 1));
+    const auto markedDetail = describeFrameDetail(filmrecorder::loadFrameDetail(testDb, 2));
     if (report.find("Frames: 2") == std::string::npos ||
         report.find("Invalid import date/time rows: 0") == std::string::npos ||
         report.find("Invalid C.Fn rows: 0") == std::string::npos ||
@@ -514,7 +632,7 @@ void selfTest() {
     appended.rolls[0].frames.back().number=3;
     appended.rolls[0].frames.back().capturedAt="2026-09-22T12:00:03";
     const auto appendedResult=filmrecorder::saveToDatabase(testDb,appended,"self-test-append");
-    const auto appendedReport=filmrecorder::inspectDatabase(testDb);
+    const auto appendedReport=databaseReport(filmrecorder::inspectDatabase(testDb));
     if(appendedResult.rolls!=1 || appendedResult.frames!=1 ||
        appendedReport.find("Imports: 2") == std::string::npos ||
        appendedReport.find("Rolls: 1") == std::string::npos ||
@@ -537,7 +655,7 @@ int main(int argc, char** argv) {
             if (argc == 4 && std::string(argv[2]) == "--database") database = argv[3];
             else if (argc != 2) throw std::runtime_error("inspect accepts only --database FILE");
             std::cout << "Database: " << std::filesystem::absolute(database).string() << '\n'
-                      << filmrecorder::inspectDatabase(database);
+                      << databaseReport(filmrecorder::inspectDatabase(database));
             return 0;
         }
         if (argc >= 2 && std::string(argv[1]) == "view") {
